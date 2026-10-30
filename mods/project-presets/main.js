@@ -6,7 +6,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { knownAgents, theme, props, closeOverlay, run, pickFolder, shared, setShared, notify, home } from "herdr";
 import { loadConfig, saveConfig } from "./config.js";
-import { inspect, projectFolder, previewBranch, createWorktree, prepareMain, runSetup, findSpace, launch } from "./git.js";
+import { inspect, projectFolder, previewBranch, createWorktree, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch } from "./git.js";
 import { initLog, log, logError } from "./log.js";
 import { fuzzy, blankProject, shortHome, splitList, joinList, basename } from "./lib.js";
 
@@ -161,8 +161,10 @@ export default class ProjectPresets extends View {
           await runSetup(p, folder, log);
         }
         setShared(RECENT, { ...(shared(RECENT) ?? {}), [p.path]: Date.now() });
+        if (p.startup.agent.trim() && p.startup.prompt && p.startup.promptMode === "send") log("Waiting for the agent to be ready for its prompt…");
+        // Stay open until the prompt is sent: closing the popup cancels this task.
+        await launch(p, folder, name);
         this.close();
-        launch(p, folder, name);
       } catch (e) {
         logError("open project", e);
         this.error = e.message;
@@ -244,11 +246,88 @@ export default class ProjectPresets extends View {
     if (r) this.edit(r.p, this.projects.indexOf(r.p));
   }
 
+  // ---- delete project ---------------------------------------------------
+
+  /** First press asks, the second removes the project from the list (its folder and worktrees stay). */
+  deleteSelected() {
+    const r = this.selected();
+    if (!r) return;
+    if (this.pendingDelete !== r.p) { this.pendingDelete = r.p; this.error = null; return; }
+    const list = this.projects.filter((p) => p !== r.p);
+    this.pendingDelete = null;
+    saveConfig(list, this.raw).then((raw) => { this.raw = raw; this.projects = list; this.cx.notify(); }).catch((e) => this.fail("delete project", e));
+  }
+
+  // ---- worktree cleanup -------------------------------------------------
+
+  openWorktrees() {
+    const r = this.selected();
+    if (!r) return;
+    this.target = r.p;
+    this.mode = "worktrees";
+    this.wts = null;
+    this.wtSel = new Set();
+    this.wtAt = 0;
+    this.wtConfirm = false;
+    this.error = null;
+    this.wtSearch = InputState.new({ placeholder: "Filter worktrees…" });
+    this.wtSearch.on("change", (_e, cx) => { this.wtAt = 0; cx.notify(); });
+    this.wtSearch.on("submit", () => { if (Date.now() - (this.handled ?? 0) > 200) this.toggleWt(); });
+    this.wtSearch.focus();
+    this.loadWorktrees();
+  }
+
+  loadWorktrees() {
+    this.cx.spawn(async (cx) => {
+      try { this.wts = await listWorktrees(this.target); } catch (e) { this.wts = []; logError("list worktrees", e); this.error = e.message; }
+      cx.notify();
+    });
+  }
+
+  wtRows() {
+    const q = this.wtSearch?.value() ?? "";
+    return (this.wts ?? []).filter((w) => fuzzy(q, `${w.branch ?? ""} ${basename(w.path)}`) >= 0);
+  }
+
+  toggleWt() {
+    const w = this.wtRows()[this.wtAt];
+    if (!w) return;
+    this.wtConfirm = false;
+    if (this.wtSel.has(w.path)) this.wtSel.delete(w.path); else this.wtSel.add(w.path);
+  }
+
+  selectMerged() {
+    this.wtConfirm = false;
+    const mergedClean = (this.wts ?? []).filter((w) => w.merged && !w.dirty && !w.locked);
+    const all = mergedClean.every((w) => this.wtSel.has(w.path));
+    for (const w of mergedClean) all ? this.wtSel.delete(w.path) : this.wtSel.add(w.path);
+  }
+
+  /** First press asks for confirmation, the second removes the ticked worktrees one by one. */
+  removeSelected() {
+    const chosen = (this.wts ?? []).filter((w) => this.wtSel.has(w.path));
+    if (!chosen.length) return;
+    if (!this.wtConfirm) { this.wtConfirm = true; return; }
+    this.wtConfirm = false;
+    this.error = null;
+    this.cx.spawn(async (cx) => {
+      const failed = [];
+      for (const w of chosen) {
+        try { await removeWorktree(this.target, w); log("debug", "removed worktree", { path: w.path }); } catch (e) { logError("remove worktree", e); failed.push(e.message); }
+      }
+      this.wtSel = new Set();
+      this.error = failed.length ? failed.join("\n") : null;
+      try { this.wts = await listWorktrees(this.target); } catch {}
+      cx.notify();
+    });
+  }
+
   // ---- keys -------------------------------------------------------------
 
   keys(e, cx) {
     const k = e.key;
     const ctrl = e.modifiers.control;
+    if (this.pendingDelete && k !== "d") this.pendingDelete = null;
     if (k === "escape") {
       if (this.mode === "list") this.close();
       else if (this.mode === "busy" && !this.error) return;
@@ -258,8 +337,19 @@ export default class ProjectPresets extends View {
       if (k === "down" && n) this.at = (this.at + 1) % n;
       else if (k === "up" && n) this.at = (this.at + n - 1) % n;
       else if (k === "enter" && e.modifiers.shift) { this.handled = Date.now(); this.activate(true); }
+      else if (k === "d" && (ctrl || e.modifiers.alt)) this.deleteSelected();
+      else if (k === "w" && (ctrl || e.modifiers.alt)) this.openWorktrees();
       else if (k === "n" && (ctrl || e.modifiers.alt)) this.edit(blankProject(), null);
       else if (k === "e" && (ctrl || e.modifiers.alt)) this.editSelected();
+      else return;
+    } else if (this.mode === "worktrees") {
+      const n = this.wtRows().length;
+      const mod = ctrl || e.modifiers.alt;
+      if (k === "down" && n) this.wtAt = (this.wtAt + 1) % n;
+      else if (k === "up" && n) this.wtAt = (this.wtAt + n - 1) % n;
+      else if (k === "enter") { this.handled = Date.now(); this.toggleWt(); }
+      else if (k === "m" && mod) this.selectMerged();
+      else if (k === "r" && mod) this.removeSelected();
       else return;
     } else if (this.mode === "edit" && k === "tab") this.focusNextField(e.modifiers.shift);
     else if (this.mode === "edit" && k === "s" && ctrl) this.save(cx);
@@ -273,7 +363,7 @@ export default class ProjectPresets extends View {
   render() {
     const cx = this.cx;
     const t = theme();
-    const body = { list: () => this.renderList(t, cx), edit: () => this.renderEdit(t, cx), name: () => this.renderName(t), busy: () => this.renderBusy(t) }[this.mode]();
+    const body = { list: () => this.renderList(t, cx), edit: () => this.renderEdit(t, cx), worktrees: () => this.renderWorktrees(t, cx), name: () => this.renderName(t), busy: () => this.renderBusy(t) }[this.mode]();
     return v_flex().id("project-presets").track_focus(this.handle).w_full().min_h(0).p(18).gap(10).bg(t.popover).text_size(13)
       .on_key_down(this.guard("key", (e, cx) => { log("debug", "key", { key: e.key, mods: e.modifiers, mode: this.mode }); this.keys(e, cx); }))
       .child(body);
@@ -314,10 +404,43 @@ export default class ProjectPresets extends View {
       .child(this.error ? div().text_size(12).text_color(t.blocked).child(this.error) : div())
       .child(v_flex().min_h(0).h(Math.min(380, 8 + rows.length * 48)).overflow_y_scrollbar().children(rows.map(row)))
       .when(!rows.length, (el) => el.child(div().py(14).text_color(t.dim).child(this.projects.length ? "No project matches." : "No projects yet. Click Add project below a git checkout.")))
-      .child(h_flex().gap(8).items_center()
-        .child(div().flex_1().text_size(11).text_color(t.dim).child("Enter open · Shift+Enter main checkout · alt+n add · alt+e edit"))
-        .when(rows.length > 0, (el) => el.child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); })))
+      .when(Boolean(this.pendingDelete), (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove "${this.pendingDelete.name}" from the list? Press alt+d again or click Delete. The folder and its worktrees stay.`)))
+      .child(div().text_size(11).text_color(t.dim).child("Enter open · Shift+Enter checkout · alt+n add · alt+e edit · alt+w worktrees · alt+d delete"))
+      .child(h_flex().gap(8).items_center().justify_end()
+        .when(rows.length > 0, (el) => el.child(this.button(t, "pp-wt", "Worktrees", false, () => { this.openWorktrees(); cx.notify(); }))
+          .child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); }))
+          .child(this.button(t, "pp-delete", this.pendingDelete ? "Delete?" : "Delete", false, () => { this.deleteSelected(); cx.notify(); })))
         .child(this.button(t, "pp-add", "Add project", true, () => { this.edit(blankProject(), null); cx.notify(); })));
+  }
+
+  renderWorktrees(t, cx) {
+    const rows = this.wtRows();
+    if (this.wtAt >= rows.length) this.wtAt = Math.max(0, rows.length - 1);
+    const count = this.wtSel.size;
+    const row = (w, i) => h_flex().id(`pp-wt-${i}`).w_full().h(48).flex_none().overflow_hidden().px(12).gap(10).items_center().rounded(8).cursor_pointer()
+      .bg(i === this.wtAt ? t.selected : "transparent")
+      .on_click(this.guard("worktree click", () => { this.wtAt = i; this.toggleWt(); cx.notify(); }))
+      .child(div().w(14).flex_none().text_color(this.wtSel.has(w.path) ? t.accent : t.dim).child(this.wtSel.has(w.path) ? "☑" : "☐"))
+      .child(v_flex().flex_1().min_w(0)
+        .child(div().text_color(t.foreground).font_medium().truncate().child(w.branch ?? "(detached)"))
+        .child(div().text_size(11).text_color(t.dim).truncate().child(shortHome(w.path, home()))))
+      .when(Boolean(w.space), (el) => el.child(div().text_size(11).text_color(t.dim).child("open")))
+      .when(w.dirty, (el) => el.child(div().text_size(11).text_color(t.blocked).child("uncommitted")))
+      .when(w.locked, (el) => el.child(div().text_size(11).text_color(t.blocked).child("locked")))
+      .child(div().text_size(11).text_color(w.merged ? t.done : t.dim).child(w.merged ? "merged" : "unmerged"));
+    return v_flex().gap(10).min_h(0)
+      .child(this.title(t, `Worktrees · ${this.target.name}`, "Esc back"))
+      .child(h_flex().h(36).flex_none().px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
+        .child(Input.new(this.wtSearch).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
+      .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.error)))
+      .child(v_flex().min_h(0).h(Math.min(340, 8 + rows.length * 48)).overflow_y_scrollbar().children(rows.map(row)))
+      .when(this.wts === null, (el) => el.child(div().py(14).text_color(t.dim).child("Looking at worktrees…")))
+      .when(this.wts !== null && !rows.length, (el) => el.child(div().py(14).text_color(t.dim).child(this.wts.length ? "No worktree matches." : "No worktrees besides the main checkout.")))
+      .when(this.wtConfirm, (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove ${count} worktree${count > 1 ? "s" : ""}${[...(this.wts ?? [])].some((w) => this.wtSel.has(w.path) && w.space) ? ", and close their spaces" : ""}? Merged branches are deleted too. Press alt+r again or click.`)))
+      .child(div().text_size(11).text_color(t.dim).child("Enter tick · alt+m tick all merged · alt+r remove ticked. Worktrees with uncommitted changes are refused."))
+      .child(h_flex().gap(8).items_center().justify_end()
+        .child(this.button(t, "pp-wt-merged", "Tick merged", false, () => { this.selectMerged(); cx.notify(); }))
+        .child(this.button(t, "pp-wt-remove", this.wtConfirm ? `Click again to remove ${count}` : `Remove ${count} ticked`, count > 0, () => { this.removeSelected(); cx.notify(); })));
   }
 
   renderName(t) {
@@ -349,7 +472,7 @@ export default class ProjectPresets extends View {
         .child(Input.new(state).h(34).px(10).rounded(8).border_1().border_color(this.field === key ? t.accent : t.input).bg(t.background).text_size(12.8).text_color(t.foreground));
     };
     const agentState = () => this.fields.find(([k]) => k === "agent")[1];
-    const chip = (id, text, value) => this.button(t, id, text, agentState().value().trim() === value, () => { agentState().set_value(value); cx.notify(); });
+    const chip = (id, text, value) => this.button(t, id, text, agentState().value().trim() === value, () => { agentState().set_value(value); this.draft.startup.promptMode = /^hermes\b/.test(value) ? "send" : "arg"; cx.notify(); });
     const toggle = (id, text, value, set) => this.button(t, id, `${value ? "✓" : "○"} ${text}`, false, () => { set(!value); cx.notify(); });
     const section = (text) => div().pt(16).text_size(11).font_semibold().text_color(t.dim).child(text.toUpperCase());
     return v_flex().gap(0).min_h(0)
@@ -380,6 +503,9 @@ export default class ProjectPresets extends View {
         .child(field("agent"))
         .child(field("args"))
         .child(field("prompt"))
+        .child(h_flex().pt(8).gap(8).items_center()
+          .child(this.button(t, "pp-pmode", `Prompt: ${d.startup.promptMode === "send" ? "typed after start" : "command-line argument"}`, false, () => { d.startup.promptMode = d.startup.promptMode === "send" ? "arg" : "send"; cx.notify(); }))
+          .child(div().text_size(11.5).text_color(t.dim).child(d.startup.promptMode === "send" ? "for agents that reject a prompt argument" : "claude and most agents")))
         .child(field("setup"))
         .child(field("tabs")))
       .child(this.error ? div().pt(8).text_size(12).text_color(t.blocked).child(this.error) : div())

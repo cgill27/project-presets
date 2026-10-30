@@ -24,10 +24,12 @@ The editor replaces the list in the same popup: Name, Folder (+ Browse…), Grou
   - `always`: create a worktree and open a space on it. The `{slug}` part is the time (HHMMSS).
   - `ask`: a name step appears with a live preview of the resulting branch; Enter creates it. Empty name uses the time.
 - **Shift+Enter** always means the main checkout, whatever the mode.
-- **alt+n** (or the Add project button) adds a project, **alt+e** (or Edit) edits the highlighted one, **ctrl+s** saves, **Tab** moves between fields, **Esc** goes back one step, then closes.
+- **alt+w** (or Worktrees) opens worktree cleanup, **alt+d** (or Delete) removes the project from the list after a second press, **alt+n** (or the Add project button) adds a project, **alt+e** (or Edit) edits the highlighted one, **ctrl+s** saves, **Tab** moves between fields, **Esc** goes back one step, then closes.
 - While working, the popup lists progress lines (`git fetch origin…`, `git worktree add …`, `$ <setup command>`). An error stays on screen until Esc.
 - Worktree creation: `git fetch <remote>` (a failure is logged and the local ref is used), then `git worktree add --no-track -b <branch> <folder> <remote>/<base>`. A taken branch or folder gets `-2`, `-3`… up to `-20`.
 - Fast-forward only happens on the checkout when it is on the base branch, clean, and can fast-forward.
+- **Worktree cleanup** lists the repo's linked worktrees (`git worktree list --porcelain`, main checkout excluded) with the branch, folder, and badges: `open` (a space shows it), `uncommitted`, `locked`, `merged` (branch is an ancestor of `<remote>/<base>`) or `unmerged`. Enter ticks the highlighted row, alt+m ticks every merged, clean one, alt+r asks for confirmation and the second press removes the ticked ones with `git worktree remove` (never `--force`, so dirty ones are refused and reported). A merged branch is then deleted with `git branch -d`; an unmerged one is kept. The space showing a removed worktree is closed with `space.close`.
+- **Delete** only removes the project from `project-presets.json`; its folder and worktrees are left alone.
 - Selecting a project records it in shared state `project-presets.recent` for ordering.
 
 ## Built from
@@ -57,6 +59,7 @@ The editor replaces the list in the same popup: Name, Folder (+ Browse…), Grou
 - Setup commands and extra tabs run arbitrary shell from the config file. Tell the person before installing a shared config.
 - `exec` stops after 30 seconds, so a slow `git fetch` or setup command is cut off; the picker logs it and carries on.
 - A failed setup command stops the remaining ones but the space still opens.
+- The first prompt goes to the agent as a command-line argument (`space.new {task}`) by default, which `hermes` and some other agents reject as an unknown subcommand. The Prompt button switches the project to "typed after start": the agent is started bare and the prompt is sent with `hc send` once `hc ls --json` shows it idle (6 s after start if it never reports a status, never while blocked). Picking the Hermes agent button sets this automatically.
 - The agent command and its arguments are split into words, with '…' and "…" keeping spaces together; there's no other shell syntax. The first prompt is only sent when an agent is set.
 - Extra tabs rely on the new space being the focused one right after `space.new`.
 - Local folders only: no `machine` field yet.
@@ -70,4 +73,6 @@ The editor replaces the list in the same popup: Name, Folder (+ Browse…), Grou
 - Adding a project with Add project and Browse… writes it to `data/project-presets.json`; a folder that isn't a git checkout is refused with a message.
 - With mode `ask`, typing "fix login" shows `<user>/<date>-fix-login` and Enter creates that worktree under the configured root, from `<remote>/<base>`, in a new space.
 - Selecting the same project again with `always` gives `…-2`, not an error.
+- Worktrees → alt+m → alt+r twice removes merged, clean worktrees and their branches, closes their spaces, and refuses one with uncommitted changes.
+- Delete asks once, then removes the project from the file.
 - With mode `never`, Enter focuses an already-open space instead of making another.

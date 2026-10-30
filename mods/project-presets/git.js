@@ -1,5 +1,5 @@
 // Everything that touches git or starts a space. `log(msg)` reports progress to the picker.
-import { exec as rawExec, run, focused, spaces, home } from "herdr";
+import { exec as rawExec, hc, run, focused, spaces, home } from "herdr";
 import { log } from "./log.js";
 import { splitArgs, slug, branchName, expandHome, expand, basename, dateStamp, timeStamp } from "./lib.js";
 
@@ -70,7 +70,7 @@ async function fetchRemote(folder, g, log) {
   }
 }
 
-async function baseRef(folder, g) {
+export async function baseRef(folder, g) {
   for (const ref of [`${g.remote}/${g.base}`, g.base]) {
     if ((await git(folder, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])).code === 0) return ref;
   }
@@ -134,11 +134,95 @@ export async function runSetup(project, folder, log) {
 export const findSpace = (project) => spaces().find((s) => !s.machine && s.folder === projectFolder(project));
 
 /** Opens the folder as a space, with the project's agent, first prompt and extra tabs. */
-export function launch(project, folder, name) {
-  const { agent, args, prompt, tabs } = project.startup;
+export async function launch(project, folder, name) {
+  const { agent, args, prompt, promptMode, tabs } = project.startup;
   const argv = agent.trim() ? [...splitArgs(agent), ...splitArgs(args)] : [];
-  log("debug", "launch", { folder, name, argv, tabs });
-  run("space.new", { name, folder, ...(argv.length ? { argv, ...(prompt ? { task: prompt } : {}) } : {}) });
+  // "arg": herdr appends the prompt to the command line (claude and most agents take that).
+  // "send": start the agent bare and type the prompt once it is ready (hermes and others
+  // that read a positional argument as a subcommand).
+  const send = argv.length && prompt && promptMode === "send";
+  const known = send ? new Set((await liveTerminals()).map((t) => t.address)) : null;
+  log("debug", "launch", { folder, name, argv, promptMode, tabs });
+  run("space.new", { name, folder, ...(argv.length ? { argv, ...(prompt && !send ? { task: prompt } : {}) } : {}) });
   const space = focused()?.space;
   for (const cmd of tabs) run("tab.new", { space, name: cmd.split(/\s+/)[0], folder, argv: ["sh", "-c", cmd] });
+  if (send) await sendWhenReady(known, folder, prompt);
+}
+
+const sleep = (s) => rawExec("sleep", [String(s)]);
+
+async function liveTerminals() {
+  const r = await hc(["ls", "--json"]);
+  return (JSON.parse(r.stdout).terminals ?? []).filter((t) => t.state === "live");
+}
+
+/** The terminal space.new just made: new since `known`, starting in `folder`. */
+async function findNewTerminal(known, folder) {
+  for (let i = 0; i < 20; i++) {
+    const t = (await liveTerminals()).find((x) => !known.has(x.address) && x.cwd === folder);
+    if (t) return t.address;
+    await sleep(0.5);
+  }
+  return null;
+}
+
+const SHELLS = new Set(["bash", "sh", "zsh", "fish", "dash"]);
+
+/** Types `text` into the new space's terminal once its agent is ready. An agent herdr reports a
+ *  status for must be idle (or done); one it doesn't know (hermes) is ready once it has been the
+ *  foreground program for 6 s. A blocked one (a trust dialog, say) is left alone. */
+async function sendWhenReady(known, folder, text) {
+  const terminal = await findNewTerminal(known, folder);
+  if (!terminal) return log("error", "prompt not sent: couldn't find the new terminal", { folder });
+  const started = Date.now();
+  for (;;) {
+    const t = (await liveTerminals()).find((x) => x.address === terminal);
+    if (!t) return log("error", "prompt not sent: the terminal ended", { terminal });
+    const waited = Date.now() - started;
+    let fg = null;
+    if (!t.status) {
+      try { fg = JSON.parse((await hc(["get", terminal, "--json"])).stdout).foreground?.name ?? null; } catch {}
+    }
+    log("debug", "waiting to send prompt", { terminal, status: t.status ?? null, agent: t.agent, foreground: fg, waited });
+    if (t.status === "blocked") return log("error", "prompt not sent: the agent is waiting on you", { terminal });
+    if (t.status === "idle" || t.status === "done") break;
+    if (!t.status && fg && !SHELLS.has(fg) && waited > 6000) break;
+    if (waited > 30000) return log("error", "prompt not sent: the agent never became ready", { terminal, foreground: fg });
+    await sleep(0.5);
+  }
+  const r = await hc(["send", terminal, text]);
+  log("debug", "sent prompt", { terminal, code: r.code });
+  if (r.code !== 0) log("error", `hc send failed: ${r.stderr.split("\n")[0]}`, { terminal });
+}
+
+/** The repo's linked worktrees (not the main checkout): { path, branch, dirty, merged, space }.
+ *  merged: the branch is already in <remote>/<base>, so removing it loses nothing. */
+export async function listWorktrees(project) {
+  const folder = projectFolder(project);
+  const r = await git(folder, ["worktree", "list", "--porcelain"]);
+  if (r.code !== 0) throw new Error(out({ stdout: r.stderr }) || "git worktree list failed");
+  const blocks = r.stdout.trim().split(/\n\n+/).slice(1);
+  let base = null;
+  try { base = await baseRef(folder, project.git); } catch {}
+  const open = spaces().filter((s) => !s.machine);
+  const list = [];
+  for (const b of blocks) {
+    const path = (b.match(/^worktree (.+)$/m) ?? [])[1];
+    const branch = ((b.match(/^branch refs\/heads\/(.+)$/m) ?? [])[1]) ?? null;
+    if (!path || /^prunable/m.test(b)) continue;
+    const dirty = out(await git(path, ["status", "--porcelain"])) !== "";
+    const merged = Boolean(base && branch && (await git(folder, ["merge-base", "--is-ancestor", branch, base])).code === 0);
+    list.push({ path, branch, dirty, merged, locked: /^locked/m.test(b), space: open.find((s) => s.folder === path) ?? null });
+  }
+  return list;
+}
+
+/** Removes one worktree (git refuses when it has uncommitted changes), its branch when merged,
+ *  and closes the space showing it. */
+export async function removeWorktree(project, wt) {
+  const folder = projectFolder(project);
+  const r = await git(folder, ["worktree", "remove", wt.path]);
+  if (r.code !== 0) throw new Error(`${wt.branch ?? wt.path}: ${out({ stdout: r.stderr }).split("\n")[0]}`);
+  if (wt.branch && wt.merged) await git(folder, ["branch", "-d", wt.branch]);
+  if (wt.space) run("space.close", { id: wt.space.id });
 }
