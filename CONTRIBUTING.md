@@ -14,9 +14,9 @@ Thanks for helping out. This is a small [Herdr](https://herdr.dev) app mod, so c
 1. Fork the repository on GitHub, then clone your fork:
 
    ```sh
-   git clone git@github.com:<your-username>/herdr-space-projects.git
-   cd herdr-space-projects
-   git remote add upstream git@github.com:cgill27/herdr-space-projects.git
+   git clone git@github.com:<your-username>/project-presets.git
+   cd project-presets
+   git remote add upstream git@github.com:cgill27/project-presets.git
    ```
 
 2. Copy the type definitions Herdr generates into the mod folder (they are git-ignored):
