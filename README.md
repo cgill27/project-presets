@@ -12,10 +12,34 @@ Projects live in `~/.config/herdr-app/data/project-presets.json`; add them with 
 
 ## Troubleshooting
 
-Errors are logged to `~/.config/herdr-app/data/project-presets.log`. Create `~/.config/herdr-app/data/project-presets.debug` to also log keys, clicks and git commands.
+Only errors are logged by default. Debug logging is **off** unless you turn it on.
+
+**Where the log is:** `~/.config/herdr-app/data/project-presets.log` (the last 64 KB are kept). Errors also appear in the popup.
+
+**Turn debug logging on** to capture a problem:
+
+1. Create the flag file:
+
+   ```sh
+   touch ~/.config/herdr-app/data/project-presets.debug
+   ```
+
+2. Close and reopen the picker (`ctrl-alt-p`). The flag is read each time the picker opens, so no restart is needed.
+3. Reproduce the problem. With debug on, the log records every key, click, git command (with exit code and the first line of any error), and the steps of sending a prompt to an agent.
+4. Attach the relevant lines of the log to your issue. Remove private paths or names you don't want to share first.
+
+**Turn it off again:**
+
+```sh
+rm ~/.config/herdr-app/data/project-presets.debug
+```
+
+To start a fresh log before reproducing, empty it with `: > ~/.config/herdr-app/data/project-presets.log`.
 
 ## Development
 
 `node --test test/` runs the pure-helper tests; `herdr-app check mods/project-presets` checks the mod. The `.d.ts` files in the mod folder are copied from `~/.config/herdr-app/` and not committed.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute.
 
 Setup commands and extra tabs run shell commands from your config, so read a shared config before using it.
