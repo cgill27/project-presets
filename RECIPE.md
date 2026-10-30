@@ -1,6 +1,6 @@
 # Project presets
 
-A project picker for the Herdr app. You keep a list of local git checkouts, each with its own settings: whether selecting it opens the checkout or a fresh worktree, how the branch is named, what git does first, and what starts in the new space. `ctrl-alt-p` opens a fuzzy-searchable list; Enter does what that project is set up to do.
+A project picker for the Herdr app. You keep a list of local git checkouts, each with its own settings: whether selecting it opens the checkout or a fresh worktree, how the branch is named, what git does first, and what starts in the new space. `ctrl-alt-p` (`cmd-p` on macOS) opens a fuzzy-searchable list; Enter does what that project is set up to do.
 
 ![Project presets](preview.png)
 
@@ -24,7 +24,7 @@ The editor replaces the list in the same popup: Name, Folder (+ Browse…), Grou
   - `always`: create a worktree and open a space on it. The `{slug}` part is the time (HHMMSS).
   - `ask`: a name step appears with a live preview of the resulting branch; Enter creates it. Empty name uses the time.
 - **Shift+Enter** always means the main checkout, whatever the mode.
-- **alt+w** (or Worktrees) opens worktree cleanup, **alt+d** (or Delete) removes the project from the list after a second press, **alt+n** (or the Add project button) adds a project, **alt+e** (or Edit) edits the highlighted one, **ctrl+s** saves, **Tab** moves between fields, **Esc** goes back one step, then closes.
+- With alt, ctrl or cmd held (⌘ on macOS): **w** (or the Worktrees button) opens worktree cleanup, **d** (or Delete) removes the project from the list after a second press, **n** (or Add project) adds a project, **e** (or Edit) edits the highlighted one, **s** saves, **Tab** moves between fields, **Esc** goes back one step, then closes.
 - While working, the popup lists progress lines (`git fetch origin…`, `git worktree add …`, `$ <setup command>`). An error stays on screen until Esc.
 - Worktree creation: `git fetch <remote>` (a failure is logged and the local ref is used), then `git worktree add --no-track -b <branch> <folder> <remote>/<base>`. A taken branch or folder gets `-2`, `-3`… up to `-20`.
 - Fast-forward only happens on the checkout when it is on the base branch, clean, and can fast-forward.
@@ -35,7 +35,7 @@ The editor replaces the list in the same popup: Name, Folder (+ Browse…), Grou
 ## Built from
 
 - `mods/project-presets/`: `main.js` (the View: list, name step, busy, editor modes), `git.js`, `config.js`, `lib.js` (pure helpers), `mod.json` (`place: "none"`, popup overlay 680 x 0.8, `at: "top"`, `offset: 40`).
-- `keys.json`: `"global": { "ctrl-alt-p": "mod.open:project-presets" }`, merged into the person's file.
+- `keys.json`: `"global": { "ctrl-alt-p": "mod.open:project-presets", "cmd-p": "mod.open:project-presets" }` (ctrl-alt-p for Linux and Windows, cmd-p for macOS), merged into the person's file. Ask before replacing a key they already use; `cmd-alt-p` is the fallback on macOS.
 - Config file `~/.config/herdr-app/data/project-presets.json` (hand-editable, written with `writeTextFile` and its expected previous text):
 
 ```json
@@ -69,10 +69,10 @@ The editor replaces the list in the same popup: Name, Folder (+ Browse…), Grou
 ## Done when
 
 - `herdr-app check mods/project-presets` passes.
-- `ctrl-alt-p` opens the picker; typing `dmo` ranks a project named Demo first.
+- `ctrl-alt-p` (or `cmd-p` on macOS) opens the picker; typing `dmo` ranks a project named Demo first.
 - Adding a project with Add project and Browse… writes it to `data/project-presets.json`; a folder that isn't a git checkout is refused with a message.
 - With mode `ask`, typing "fix login" shows `<user>/<date>-fix-login` and Enter creates that worktree under the configured root, from `<remote>/<base>`, in a new space.
 - Selecting the same project again with `always` gives `…-2`, not an error.
-- Worktrees → alt+m → alt+r twice removes merged, clean worktrees and their branches, closes their spaces, and refuses one with uncommitted changes.
+- Worktrees → m → r twice (with alt, ctrl or cmd held) removes merged, clean worktrees and their branches, closes their spaces, and refuses one with uncommitted changes.
 - Delete asks once, then removes the project from the file.
 - With mode `never`, Enter focuses an already-open space instead of making another.

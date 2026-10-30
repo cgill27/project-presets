@@ -1,3 +1,6 @@
 {
-  "global": { "ctrl-alt-p": "mod.open:project-presets" }
+  "global": {
+    "ctrl-alt-p": "mod.open:project-presets",
+    "cmd-p": "mod.open:project-presets"
+  }
 }

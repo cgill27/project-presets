@@ -1,16 +1,20 @@
 // Project presets: a picker of configured git checkouts, each with its own worktree and startup
-// settings. Type to filter, ↑/↓ and Enter to open, Shift+Enter for the main checkout, ctrl+n to add,
-// ctrl+e to edit, Esc to leave.
+// settings. Type to filter, ↑/↓ and Enter to open, Shift+Enter for the main checkout, Add project / Edit / Worktrees / Delete
+// buttons (or alt/ctrl/cmd + n, e, w, d), Esc to leave.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { knownAgents, theme, props, closeOverlay, run, pickFolder, shared, setShared, notify, home } from "herdr";
+import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, notify, home } from "herdr";
 import { loadConfig, saveConfig } from "./config.js";
 import { inspect, projectFolder, previewBranch, createWorktree, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch } from "./git.js";
 import { initLog, log, logError } from "./log.js";
 import { fuzzy, blankProject, shortHome, splitList, joinList, basename } from "./lib.js";
 
 const RECENT = "project-presets.recent";
+// Shortcut hints: ⌘ on macOS (Option+letter types a character there), alt elsewhere.
+const mac = () => window()?.platform === "macos";
+const key = (letter, other = "alt") => (mac() ? `⌘${letter.toUpperCase()}` : `${other}+${letter}`);
+
 const MODES = ["ask", "always", "never"];
 const MODE_HELP = { ask: "ask for a branch name", always: "always a new worktree", never: "open the checkout" };
 
@@ -327,6 +331,7 @@ export default class ProjectPresets extends View {
   keys(e, cx) {
     const k = e.key;
     const ctrl = e.modifiers.control;
+    const mod = ctrl || e.modifiers.alt || e.modifiers.platform; // ctrl, alt or cmd
     if (this.pendingDelete && k !== "d") this.pendingDelete = null;
     if (k === "escape") {
       if (this.mode === "list") this.close();
@@ -337,14 +342,13 @@ export default class ProjectPresets extends View {
       if (k === "down" && n) this.at = (this.at + 1) % n;
       else if (k === "up" && n) this.at = (this.at + n - 1) % n;
       else if (k === "enter" && e.modifiers.shift) { this.handled = Date.now(); this.activate(true); }
-      else if (k === "d" && (ctrl || e.modifiers.alt)) this.deleteSelected();
-      else if (k === "w" && (ctrl || e.modifiers.alt)) this.openWorktrees();
-      else if (k === "n" && (ctrl || e.modifiers.alt)) this.edit(blankProject(), null);
-      else if (k === "e" && (ctrl || e.modifiers.alt)) this.editSelected();
+      else if (k === "d" && mod) this.deleteSelected();
+      else if (k === "w" && mod) this.openWorktrees();
+      else if (k === "n" && mod) this.edit(blankProject(), null);
+      else if (k === "e" && mod) this.editSelected();
       else return;
     } else if (this.mode === "worktrees") {
       const n = this.wtRows().length;
-      const mod = ctrl || e.modifiers.alt;
       if (k === "down" && n) this.wtAt = (this.wtAt + 1) % n;
       else if (k === "up" && n) this.wtAt = (this.wtAt + n - 1) % n;
       else if (k === "enter") { this.handled = Date.now(); this.toggleWt(); }
@@ -352,7 +356,7 @@ export default class ProjectPresets extends View {
       else if (k === "r" && mod) this.removeSelected();
       else return;
     } else if (this.mode === "edit" && k === "tab") this.focusNextField(e.modifiers.shift);
-    else if (this.mode === "edit" && k === "s" && ctrl) this.save(cx);
+    else if (this.mode === "edit" && k === "s" && mod) this.save(cx);
     else return;
     cx.stop_propagation();
     cx.notify();
@@ -404,8 +408,8 @@ export default class ProjectPresets extends View {
       .child(this.error ? div().text_size(12).text_color(t.blocked).child(this.error) : div())
       .child(v_flex().min_h(0).h(Math.min(380, 8 + rows.length * 48)).overflow_y_scrollbar().children(rows.map(row)))
       .when(!rows.length, (el) => el.child(div().py(14).text_color(t.dim).child(this.projects.length ? "No project matches." : "No projects yet. Click Add project below a git checkout.")))
-      .when(Boolean(this.pendingDelete), (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove "${this.pendingDelete.name}" from the list? Press alt+d again or click Delete. The folder and its worktrees stay.`)))
-      .child(div().text_size(11).text_color(t.dim).child("Enter open · Shift+Enter checkout · alt+n add · alt+e edit · alt+w worktrees · alt+d delete"))
+      .when(Boolean(this.pendingDelete), (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove "${this.pendingDelete.name}" from the list? Press ${key("d")} again or click Delete. The folder and its worktrees stay.`)))
+      .child(div().text_size(11).text_color(t.dim).child(`Enter open · Shift+Enter checkout · ${key("n")} add · ${key("e")} edit · ${key("w")} worktrees · ${key("d")} delete`))
       .child(h_flex().gap(8).items_center().justify_end()
         .when(rows.length > 0, (el) => el.child(this.button(t, "pp-wt", "Worktrees", false, () => { this.openWorktrees(); cx.notify(); }))
           .child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); }))
@@ -436,8 +440,8 @@ export default class ProjectPresets extends View {
       .child(v_flex().min_h(0).h(Math.min(340, 8 + rows.length * 48)).overflow_y_scrollbar().children(rows.map(row)))
       .when(this.wts === null, (el) => el.child(div().py(14).text_color(t.dim).child("Looking at worktrees…")))
       .when(this.wts !== null && !rows.length, (el) => el.child(div().py(14).text_color(t.dim).child(this.wts.length ? "No worktree matches." : "No worktrees besides the main checkout.")))
-      .when(this.wtConfirm, (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove ${count} worktree${count > 1 ? "s" : ""}${[...(this.wts ?? [])].some((w) => this.wtSel.has(w.path) && w.space) ? ", and close their spaces" : ""}? Merged branches are deleted too. Press alt+r again or click.`)))
-      .child(div().text_size(11).text_color(t.dim).child("Enter tick · alt+m tick all merged · alt+r remove ticked. Worktrees with uncommitted changes are refused."))
+      .when(this.wtConfirm, (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove ${count} worktree${count > 1 ? "s" : ""}${[...(this.wts ?? [])].some((w) => this.wtSel.has(w.path) && w.space) ? ", and close their spaces" : ""}? Merged branches are deleted too. Press ${key("r")} again or click.`)))
+      .child(div().text_size(11).text_color(t.dim).child(`Enter tick · ${key("m")} tick all merged · ${key("r")} remove ticked. Worktrees with uncommitted changes are refused.`))
       .child(h_flex().gap(8).items_center().justify_end()
         .child(this.button(t, "pp-wt-merged", "Tick merged", false, () => { this.selectMerged(); cx.notify(); }))
         .child(this.button(t, "pp-wt-remove", this.wtConfirm ? `Click again to remove ${count}` : `Remove ${count} ticked`, count > 0, () => { this.removeSelected(); cx.notify(); })));
@@ -476,7 +480,7 @@ export default class ProjectPresets extends View {
     const toggle = (id, text, value, set) => this.button(t, id, `${value ? "✓" : "○"} ${text}`, false, () => { set(!value); cx.notify(); });
     const section = (text) => div().pt(16).text_size(11).font_semibold().text_color(t.dim).child(text.toUpperCase());
     return v_flex().gap(0).min_h(0)
-      .child(this.title(t, this.index == null ? "Add project" : "Edit project", "Tab next field · ctrl+s save · Esc back"))
+      .child(this.title(t, this.index == null ? "Add project" : "Edit project", `Tab next field · ${key("s", "ctrl")} save · Esc back`))
       .child(v_flex().min_h(0).h(460).overflow_y_scrollbar().pr(8)
         .child(field("name"))
         .child(field("path"))
