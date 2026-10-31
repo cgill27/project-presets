@@ -4,7 +4,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
-import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, notify, home } from "herdr";
+import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home } from "herdr";
 import { loadConfig, saveConfig } from "./config.js";
 import { inspect, projectFolder, previewBranch, createWorktree, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch } from "./git.js";
 import { readDemo } from "./demo.js";
