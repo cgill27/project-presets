@@ -40,11 +40,31 @@ export function branchName(template, vars) {
     .replace(/^[/.-]+|[/.]+$/g, "");
 }
 
-export const basename = (p) => String(p).replace(/\/+$/, "").split("/").pop();
+export const basename = (p) => String(p).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
 
 /** "~/x" and "$HOME/x" to an absolute path. */
 export function expandHome(p, home) {
-  return String(p ?? "").trim().replace(/^(~|\$HOME)(?=\/|$)/, home).replace(/\/+$/, "");
+  return String(p ?? "").replace(/^[\r\n]+|[\r\n]+$/g, "").replace(/^(~|\$HOME)(?=\/|$)/, home).replace(/[\\/]+$/, "");
+}
+
+const ESCAPES = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, "\\": 92, '"': 34 };
+
+/** A path as git prints it: when it has special characters git wraps it in quotes and escapes them
+ *  (\n, \", \\ and \ooo octal bytes). Anything unquoted comes back unchanged. */
+export function unquotePath(p) {
+  if (p.length < 2 || p[0] !== '"' || p[p.length - 1] !== '"') return p;
+  const bytes = [];
+  const enc = new TextEncoder();
+  const body = p.slice(1, -1);
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c !== "\\") { bytes.push(...enc.encode(c)); continue; }
+    const oct = body.slice(i + 1, i + 4);
+    if (/^[0-7]{3}$/.test(oct)) { bytes.push(parseInt(oct, 8)); i += 3; }
+    else if (body[i + 1] in ESCAPES) { bytes.push(ESCAPES[body[i + 1]]); i++; }
+    else bytes.push(92);
+  }
+  return new TextDecoder().decode(Uint8Array.from(bytes));
 }
 
 export function shortHome(p, home) {

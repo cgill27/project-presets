@@ -262,7 +262,7 @@ export default class ProjectPresets extends View {
 
   async save(cx) {
     try {
-      for (const [key, state] of this.fields) TEXT.find(([k]) => k === key)[3](this.draft, state.value().trim());
+      for (const [key, state] of this.fields) TEXT.find(([k]) => k === key)[3](this.draft, key === "path" ? state.value() : state.value().trim());
       const d = this.draft;
       if (!d.name) throw new Error("Give the project a name");
       await inspect(projectFolder(d));

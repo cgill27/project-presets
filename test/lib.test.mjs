@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fuzzy, slug, expand, branchName, expandHome, splitList, normalize, splitArgs } from "../mods/project-presets/lib.js";
+import { fuzzy, slug, expand, branchName, expandHome, splitList, normalize, splitArgs, basename, unquotePath } from "../mods/project-presets/lib.js";
 
 test("fuzzy matches subsequences and ranks tighter matches higher", () => {
   assert.equal(fuzzy("zzz", "herdr"), -1);
@@ -47,4 +47,18 @@ test("worktree defaults cover the space name and the repo space", () => {
   assert.equal(p.worktree.repoSpace, false);
   assert.equal(expand(p.worktree.spaceName, { name: "API", branch: "me/2026-10-31-x" }), "API · me/2026-10-31-x");
   assert.equal(expand("{slug}", { slug: "add-search" }), "add-search");
+});
+
+test("unquotePath decodes git's quoted paths", () => {
+  assert.equal(unquotePath("/srv/plain"), "/srv/plain");
+  assert.equal(unquotePath('"/srv/a\\nb"'), "/srv/a\nb");
+  assert.equal(unquotePath('"/srv/say \\"hi\\" \\\\ x"'), '/srv/say "hi" \\ x');
+  assert.equal(unquotePath('"/srv/caf\\303\\251"'), "/srv/café");
+});
+
+test("paths keep trailing spaces and accept backslashes", () => {
+  assert.equal(expandHome("/srv/Repo  ", "/h"), "/srv/Repo  ");
+  assert.equal(expandHome("~/x\n", "/h"), "/h/x");
+  assert.equal(basename("C:\\work\\repo\\"), "repo");
+  assert.equal(basename("/srv/repo/"), "repo");
 });

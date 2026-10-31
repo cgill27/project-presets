@@ -1,7 +1,7 @@
 // Everything that touches git or starts a space. `log(msg)` reports progress to the picker.
 import { exec as rawExec, hc, run, focused, spaces, home } from "herdr";
 import { log } from "./log.js";
-import { splitArgs, slug, branchName, expandHome, expand, basename, dateStamp, timeStamp } from "./lib.js";
+import { splitArgs, slug, branchName, expandHome, expand, basename, dateStamp, timeStamp, unquotePath } from "./lib.js";
 
 /** exec, logged in debug mode: command, folder, exit code and the first line of stderr. */
 async function exec(command, args = [], options = {}) {
@@ -91,19 +91,20 @@ export async function createWorktree(project, slugText, log) {
   const wanted = branchName(w.branchTemplate, vars);
   if (!wanted) throw new Error("The branch name template produced an empty name");
   if ((await git(folder, ["check-ref-format", "--branch", wanted])).code !== 0) throw new Error(`"${wanted}" is not a valid branch name`);
-  let branch = wanted;
-  let path;
+  const isTaken = async (branch, path) => (await git(folder, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).code === 0 || (await exists(path));
+  // Another launch can take the name between the check and `worktree add`: when the add fails
+  // and the name is now taken, move on to the next suffix instead of failing.
   for (let n = 1; ; n++) {
-    branch = n === 1 ? wanted : `${wanted}-${n}`;
-    path = expandHome(expand(w.root, { ...vars, branch }), home());
-    const taken = (await git(folder, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).code === 0 || (await exists(path));
-    if (!taken) break;
     if (n > 20) throw new Error(`Branch ${wanted} and its -N variants are all taken`);
+    const branch = n === 1 ? wanted : `${wanted}-${n}`;
+    const path = expandHome(expand(w.root, { ...vars, branch }), home());
+    if (await isTaken(branch, path)) continue;
+    log(`git worktree add ${branch} from ${base}…`);
+    const r = await git(folder, ["worktree", "add", "--no-track", "-b", branch, path, base]);
+    if (r.code === 0) return { folder: path, branch, vars };
+    if (await isTaken(branch, path)) continue;
+    throw new Error(out({ stdout: r.stderr }) || "git worktree add failed");
   }
-  log(`git worktree add ${branch} from ${base}…`);
-  const r = await git(folder, ["worktree", "add", "--no-track", "-b", branch, path, base]);
-  if (r.code !== 0) throw new Error(out({ stdout: r.stderr }) || "git worktree add failed");
-  return { folder: path, branch, vars };
 }
 
 /** The main checkout, brought up to date when fast-forward is on and that's safe. */
@@ -141,6 +142,15 @@ export function worktreeSpaceName(project, wt) {
   return name || `${project.name} · ${wt.branch}`;
 }
 
+// Launches take turns creating their space: the new terminal is found as "new since a snapshot",
+// which two overlapping launches into one folder would otherwise mix up.
+let spaceLock = Promise.resolve();
+const exclusive = (fn) => {
+  const result = spaceLock.then(fn);
+  spaceLock = result.then(() => {}, () => {});
+  return result;
+};
+
 export async function launch(project, folder, name) {
   const { agent, args, prompt, promptMode, tabs } = project.startup;
   const argv = agent.trim() ? [...splitArgs(agent), ...splitArgs(args)] : [];
@@ -148,18 +158,21 @@ export async function launch(project, folder, name) {
   // "send": start the agent bare and type the prompt once it is ready (hermes and others
   // that read a positional argument as a subcommand).
   const send = argv.length && prompt && promptMode === "send";
-  const known = send ? new Set((await liveTerminals()).map((t) => t.address)) : null;
-  // Herdr nests a worktree's space under its repo's own space, but only while that one is open.
-  const main = projectFolder(project);
-  if (project.worktree.repoSpace && folder !== main && !findSpace(project)) {
-    log("debug", "opening the repo's space first", { main });
-    run("space.new", { name: project.name, folder: main });
-  }
-  log("debug", "launch", { folder, name, argv, promptMode, tabs });
-  run("space.new", { name, folder, ...(argv.length ? { argv, ...(prompt && !send ? { task: prompt } : {}) } : {}) });
-  const space = focused()?.space;
-  for (const cmd of tabs) run("tab.new", { space, name: cmd.split(/\s+/)[0], folder, argv: ["sh", "-c", cmd] });
-  if (send) await sendWhenReady(known, folder, prompt);
+  const terminal = await exclusive(async () => {
+    const known = send ? new Set((await liveTerminals()).map((t) => t.address)) : null;
+    // Herdr nests a worktree's space under its repo's own space, but only while that one is open.
+    const main = projectFolder(project);
+    if (project.worktree.repoSpace && folder !== main && !findSpace(project)) {
+      log("debug", "opening the repo's space first", { main });
+      run("space.new", { name: project.name, folder: main });
+    }
+    log("debug", "launch", { folder, name, argv, promptMode, tabs });
+    run("space.new", { name, folder, ...(argv.length ? { argv, ...(prompt && !send ? { task: prompt } : {}) } : {}) });
+    const space = focused()?.space;
+    for (const cmd of tabs) run("tab.new", { space, name: cmd.split(/\s+/)[0], folder, argv: ["sh", "-c", cmd] });
+    return send ? await findNewTerminal(known, folder) : null;
+  });
+  if (send) await sendWhenReady(terminal, folder, prompt);
 }
 
 const sleep = (s) => rawExec("sleep", [String(s)]);
@@ -184,8 +197,7 @@ const SHELLS = new Set(["bash", "sh", "zsh", "fish", "dash"]);
 /** Types `text` into the new space's terminal once its agent is ready. An agent herdr reports a
  *  status for must be idle (or done); one it doesn't know (hermes) is ready once it has been the
  *  foreground program for 6 s. A blocked one (a trust dialog, say) is left alone. */
-async function sendWhenReady(known, folder, text) {
-  const terminal = await findNewTerminal(known, folder);
+async function sendWhenReady(terminal, folder, text) {
   if (!terminal) return log("error", "prompt not sent: couldn't find the new terminal", { folder });
   const started = Date.now();
   for (;;) {
@@ -220,7 +232,7 @@ export async function listWorktrees(project) {
   const open = spaces().filter((s) => !s.machine);
   const list = [];
   for (const b of blocks) {
-    const path = (b.match(/^worktree (.+)$/m) ?? [])[1];
+    const path = unquotePath((b.match(/^worktree (.+)$/m) ?? [])[1] ?? "");
     const branch = ((b.match(/^branch refs\/heads\/(.+)$/m) ?? [])[1]) ?? null;
     if (!path || /^prunable/m.test(b)) continue;
     const dirty = out(await git(path, ["status", "--porcelain"])) !== "";
