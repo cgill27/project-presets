@@ -64,6 +64,31 @@ Copy `mods/project-presets/` to `~/.config/herdr-app/mods/` and merge `keys.json
 
 Projects live in `~/.config/herdr-app/data/project-presets.json`; add them with the Add project button.
 
+## Updating
+
+Herdr doesn't update community mods for you, so how you update depends on how you installed. Your projects live in `~/.config/herdr-app/data/project-presets.json`, outside the mod folder, so an update never touches them.
+
+**Installed as a symlink to a clone (easiest).** Install it this way once:
+
+```sh
+git clone https://github.com/cgill27/project-presets.git ~/code/project-presets
+ln -s ~/code/project-presets/mods/project-presets ~/.config/herdr-app/mods/project-presets
+```
+
+Then update with a pull. Herdr reloads a mod as soon as its files change, so there is nothing to restart:
+
+```sh
+git -C ~/code/project-presets pull --ff-only
+```
+
+**Installed by copying the folder.** Get the new version (a clone you have pulled, or the zip from the [latest release](https://github.com/cgill27/project-presets/releases/latest)) and replace the installed folder, keeping the `.d.ts` files herdr generates there:
+
+```sh
+rsync -a --delete --exclude='*.d.ts' ~/code/project-presets/mods/project-presets/ ~/.config/herdr-app/mods/project-presets/
+```
+
+**Check the release notes.** The key bindings in `keys.json` are merged into your own `~/.config/herdr-app/keys.json`, so an update never changes them. When a release changes a key, the notes say so; edit your file by hand.
+
 ## Troubleshooting
 
 Only errors are logged by default. Debug logging is **off** unless you turn it on.
