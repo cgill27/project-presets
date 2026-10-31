@@ -2,7 +2,7 @@
 
 A [Herdr](https://herdr.dev) app mod: a project picker where each project is a local git checkout with its own settings. Press `ctrl-alt-p` (`cmd-p` on macOS), fuzzy-search, Enter. Per project you choose whether to open the checkout or a fresh worktree (always, ask for a branch name, or never), the branch-name template, whether to fetch first, which agent to start with which arguments and first prompt, setup commands and extra tabs.
 
-![Project presets](preview.png)
+![A tour of project-presets: pick a project, name the branch, and get a new worktree with the agent running](docs/tour.gif)
 
 ## Screens
 
@@ -31,6 +31,10 @@ A project in `ask` mode asks for a name and shows the branch it will create befo
 | Branch name | Starting |
 |---|---|
 | ![Branch name](docs/screenshots/05-branch-name.png) | ![Starting](docs/screenshots/06-starting.png) |
+
+When it finishes you land in a new space on the new worktree, with the agent already running and your prompt sent. The space is named after the project and branch, and the sidebar nests it under the repository.
+
+![The result: a new space on cgill27/2026-10-30-add-search-page with Claude Code running and the first prompt answered](docs/screenshots/15-result.png)
 
 ### Adding and editing a project
 
