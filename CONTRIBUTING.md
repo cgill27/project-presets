@@ -64,6 +64,7 @@ To capture a view for the docs, create `~/.config/herdr-app/data/project-presets
 - Keep pure logic (templates, matching, parsing) in `lib.js` so it can be tested. Keep `herdr` calls in `git.js`, `config.js` and `main.js`.
 - Mods run in Herdr's own JavaScript runtime, not Node or a browser: there is no `setTimeout` or `structuredClone`. Check `~/.config/herdr-app/AGENTS.md` and the `.d.ts` files before reaching for a built-in.
 - `render()` receives no `cx`; keep the one from `init`.
+- Don't read live herdr data (`spaces()`, `shared()`, `agents()`, `window()`) inside `render()`: herdr redraws the view each time that data changes and cuts off a slow draw. Read it into `this.snap` (see `takeSnapshot` in `main.js`) and draw from the copy. Every element a draw builds costs time too, so keep rows and hints flat.
 - Wrap handlers with `this.guard(...)` and report failures with `logError` so they show up in the popup and the log instead of vanishing.
 - Anything that runs programs or reads outside the mod folder must stay obvious in the code and be listed under "Built from" and "Watch out" in `RECIPE.md`.
 - Never run `git worktree remove --force` or otherwise discard a user's uncommitted work.

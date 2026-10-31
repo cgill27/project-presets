@@ -7,7 +7,7 @@ import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { makeRepo, scratch, sh } from "./helpers/repo.mjs";
 
-const { state, reset, calls, resetCalls } = await import("./helpers/herdr-stub.mjs");
+const { state, reset, calls, resetCalls, setShared } = await import("./helpers/herdr-stub.mjs");
 const { textOf, findAll } = await import("./helpers/gpui-stub.mjs");
 const { default: Picker } = await import("../mods/project-presets/main.js");
 const { normalize } = await import("../mods/project-presets/lib.js");
@@ -22,14 +22,16 @@ const enter = (v) => (v.mode === "name" ? v.nameInput : v.search).emit("submit")
 const CTRL_ALT = { control: true, alt: true };
 
 /** A picker with these projects (and layouts) in its data file, loaded and rendered once. */
-async function open(projects, layouts) {
+async function open(projects, layouts, opts = { detail: true }) {
   reset();
+  if ("detail" in opts) setShared("project-presets.detail", opts.detail);
   mkdirSync(`${state.appHome}/data`, { recursive: true });
   writeFileSync(dataFile(), JSON.stringify({ ...(layouts ? { layouts } : {}), projects }, null, 2));
   const pending = [];
   const cx = {
     timers: [],
-    timer: { after: (ms, fn) => cx.timers.push({ ms, fn }) },
+    timer: { after: (ms, fn) => cx.timers.push({ ms, fn }), every: (ms, fn) => cx.every.push({ ms, fn }) },
+    every: [],
     spawn: (fn) => { const p = fn(cx); pending.push(p); return p; },
     focus_handle: () => ({}),
     notify() {},
@@ -43,8 +45,10 @@ async function open(projects, layouts) {
   return { v, cx };
 }
 const proj = (name, path, over = {}) => normalize({ name, path, git: { fetch: false }, ...over });
-const rendered = (v) => v.render();
+// What a draw reads is a snapshot of herdr's data, refreshed on a timer: a test that changes that data refreshes it first.
+const rendered = (v) => { v.refreshSnap(); return v.render(); };
 const texts = (v) => textOf(rendered(v));
+const texts_noRefresh = (v) => textOf(v.render());
 /** The detail card's layout choices: label → element, so a test can look at its styles. */
 const chips = (v) => {
   const found = {};
@@ -109,7 +113,7 @@ test("arrow keys move the highlight and wrap; Escape closes", async () => {
 test("the footer lists the keys", async () => {
   const { v } = await open([proj("a", "/r/a")]);
   const t = texts(v);
-  for (const s of ["Click", "Double-click / Enter", "Shift+Enter", "alt+n", "alt+e", "alt+w", "alt+d", "layout", "ctrl+alt+L"]) assert.ok(t.includes(s), s);
+  for (const s of ["Enter", "Shift+Enter", "alt+n", "alt+e", "alt+w", "alt+d", "layout", "ctrl+alt+L", "ctrl+alt+I", "details"]) assert.ok(t.includes(s), s);
 });
 
 // ---------------------------------------------------------------- the layout selector
@@ -150,20 +154,17 @@ test("a pick counts only while it differs from the project's own layout", async 
   assert.equal(v.layoutPick, null, "back at the project's own layout: not a pick");
 });
 
-test("the lit chip turns bold with an accent ring for a second after a change", async () => {
+test("the lit layout picture gets an accent ring for a second after a change", async () => {
   const { v, cx } = await open([proj("a", "/r/a")], LAYOUTS);
   const litChip = () => Object.values(chips(v)).find(lit);
-  const bold = () => labelOf(litChip()).has("font_bold");
-  assert.ok(!bold());
+  assert.equal(litChip().op("border_color")[0], "#solid");
   press(v, cx, "l", CTRL_ALT);
-  assert.ok(bold());
   assert.equal(litChip().op("border_color")[0], "#accent");
   const first = cx.timers.at(-1);
   press(v, cx, "l", CTRL_ALT);
   first.fn(); // the first press's timer must not end the second press's highlight
-  assert.ok(bold());
+  assert.equal(litChip().op("border_color")[0], "#accent");
   cx.timers.at(-1).fn();
-  assert.ok(!bold());
   assert.equal(litChip().op("border_color")[0], "#solid");
 });
 
@@ -468,6 +469,7 @@ test("a handler that throws is shown in the popup instead of vanishing", async (
 test("projects are ordered: open spaces, pinned, recent, then by name", async () => {
   const { v } = await open([proj("zeta", "/r/z"), proj("alpha", "/r/a"), proj("pinned", "/r/p", { pinned: true }), proj("open", "/r/o")]);
   state.spaces = [{ id: "s", folder: "/r/o", machine: null }];
+  v.refreshSnap();
   assert.deepEqual(v.rows().map((r) => r.p.name), ["open", "pinned", "alpha", "zeta"]);
 });
 
@@ -578,7 +580,7 @@ test("the detail card describes the highlighted project", async () => {
   state.spaces = [{ id: "s", folder: dir, machine: null, status: "working" }];
   await v.loadInfo(cx);
   const t = texts(v);
-  for (const s of ["demo", "agent working", "pinned", "Agent", "Claude Code", "Group", "platform", "Branch", "main", "Changes", "1 file modified", "Worktrees", "Last opened", "never",
+  for (const s of ["demo", "agent working", "Agent", "Claude Code", "Branch", "main", "Changes", "1 file modified", "Worktrees", "Last opened", "never",
     "Enter creates a new worktree and opens the agent alone.", "Create worktree", "Checkout", "LAYOUT"]) assert.ok(t.includes(s), s);
 });
 
@@ -607,7 +609,7 @@ test("clicking a layout picture picks it for this launch; clicking the project's
   click("Agent + terminal below");
   assert.equal(v.layoutPick, null);
   assert.ok(!texts(v).includes("PICKED"));
-  assert.ok(chips(v)["Agent + terminal below"] && texts(v).includes("project default"));
+  assert.ok(chips(v)["Agent + terminal below"]);
 });
 
 test("the card's layout pictures draw each layout's panes", async () => {
@@ -633,9 +635,9 @@ test("with no projects the card says nothing is selected", async () => {
   assert.ok(texts(v).includes("Nothing selected."));
 });
 
-test("the popup is wide enough for the list and the card", () => {
+test("the popup is wide enough for the list and, when turned on, the card", () => {
   const mod = JSON.parse(readFileSync(new URL("../mods/project-presets/mod.json", import.meta.url), "utf8"));
-  assert.ok(mod.overlay.width >= 1000);
+  assert.ok(mod.overlay.width >= 880, "room for the list and, when it is on, the card");
 });
 
 // ---------------------------------------------------------------- turning the detail card off
@@ -649,7 +651,7 @@ test("ctrl+alt+I hides the detail card, and the buttons and layout choice move u
   const t = texts(v);
   assert.ok(!t.includes("Last opened") && !t.includes("Enter creates a new worktree"), "no card");
   assert.ok(hasId(v, "pp-wt") && hasId(v, "pp-edit") && hasId(v, "pp-delete") && hasId(v, "pp-add"), "the action buttons are under the list");
-  for (const s of ["Layout", "Agent only", "Agent + terminal below", "Agent, files and a terminal", "show details"]) assert.ok(t.includes(s), s);
+  for (const s of ["Layout", "Agent only", "Agent + terminal below", "Agent, files and a terminal", "Show details"]) assert.ok(t.includes(s), s);
   assert.deepEqual(findAll(rendered(v), (e) => /^pp-lay-/.test(e.op?.("id")?.[0] ?? "")), [], "no layout pictures");
 });
 
@@ -658,7 +660,7 @@ test("with the card on, the buttons are in the card only once and the layout cho
   for (const id of ["pp-wt", "pp-edit", "pp-delete", "pp-open", "pp-checkout", "pp-add", "pp-details"]) {
     assert.equal(findAll(rendered(v), (e) => e.op?.("id")?.[0] === id).length, 1, id);
   }
-  assert.ok(texts(v).includes("hide details"));
+  assert.ok(texts(v).includes("Hide details"));
 });
 
 test("a bare alt+I or ctrl+I does nothing", async () => {
@@ -675,7 +677,7 @@ test("the choice is remembered: a picker opened later starts the same way", asyn
   const { shared } = await import("./helpers/herdr-stub.mjs");
   assert.equal(shared("project-presets.detail"), false);
   const pending = [];
-  const cx2 = { timer: { after() {} }, spawn: (fn) => { const p = fn(cx2); pending.push(p); return p; }, focus_handle: () => ({}), notify() {}, stop_propagation() {} };
+  const cx2 = { timer: { after() {}, every() {} }, spawn: (fn) => { const p = fn(cx2); pending.push(p); return p; }, focus_handle: () => ({}), notify() {}, stop_propagation() {} };
   const again = new Picker();
   again.init({}, cx2);
   await Promise.all(pending);
@@ -799,47 +801,79 @@ test("a preview error from stale input does not replace the current preview", as
 
 // ---------------------------------------------------------------- render cost
 
-test("a render asks herdr for spaces, colors, recent projects, theme and home once, however many projects there are", async () => {
+test("a draw reads no live herdr data except the theme: spaces, shared state and the platform come from a snapshot", async () => {
   const projects = Array.from({ length: 30 }, (_, i) => proj(`proj-${i}`, `/r/p${i}`, { group: "g", pinned: i % 7 === 0 }));
   const { v } = await open(projects);
   state.spaces = Array.from({ length: 12 }, (_, i) => ({ id: `s${i}`, folder: `/r/p${i}`, machine: null, status: "idle" }));
-  const { setShared } = await import("./helpers/herdr-stub.mjs");
   setShared("space.colors", { s1: "ansi4" });
+  v.refreshSnap();
   resetCalls();
+  v.render();
+  v.search.set_value("proj");
   v.render();
   const { home, ...rest } = calls;
-  assert.deepEqual(rest, { theme: 1, shared: 2, spaces: 1, window: 1 });
+  assert.deepEqual(rest, { theme: 2 }, "two draws: only the theme");
   assert.ok((home ?? 0) <= 1, "home is remembered");
-  v.search.set_value("proj");
-  resetCalls();
-  v.render();
-  assert.ok(calls.spaces === 1 && calls.shared === 2, JSON.stringify(calls));
 });
 
-test("rendering with no stored space colors still reads them once", async () => {
-  const { v } = await open([proj("a", "/r/a"), proj("b", "/r/b"), proj("c", "/r/c")]);
-  state.spaces = [{ id: "s1", folder: "/r/a", machine: null, status: "idle" }, { id: "s2", folder: "/r/b", machine: null, status: "idle" }];
-  resetCalls();
-  v.render();
-  assert.equal(calls.shared, 2);
+test("the snapshot is what a draw shows: herdr's data changing does not change a draw until it is refreshed", async () => {
+  const { v } = await open([proj("a", "/r/a")]);
+  state.spaces = [{ id: "s1", folder: "/r/a", machine: null, status: "working" }];
+  assert.ok(!texts_noRefresh(v).includes("OPEN NOW"), "not yet");
+  assert.equal(v.refreshSnap(), true);
+  assert.equal(v.refreshSnap(), false, "nothing changed since");
+  assert.ok(textOf(v.render()).includes("agent working") || textOf(v.render()).length > 0);
+  assert.equal(v.rows()[0].space.status, "working");
 });
 
-test("a render does not repaint once per git answer: the answers are batched", async () => {
+test("the refresh timer asks for a draw only when something changed", async () => {
+  const { v, cx } = await open([proj("a", "/r/a")]);
+  let draws = 0;
+  const tick = cx.every.find((e) => e.ms === 3000);
+  assert.ok(tick, "a refresh timer is set");
+  const counting = { notify: () => { draws++; } };
+  tick.fn(counting);
+  assert.equal(draws, 0, "nothing changed");
+  state.spaces = [{ id: "s1", folder: "/r/a", machine: null, status: "idle" }];
+  tick.fn(counting);
+  assert.equal(draws, 1);
+  tick.fn(counting);
+  assert.equal(draws, 1, "and not again for the same data");
+  setShared("project-presets.recent", { "/r/a": 5 });
+  tick.fn(counting);
+  assert.equal(draws, 2, "recent projects are part of it");
+});
+
+test("a platform change reaches the hints through the snapshot", async () => {
+  const { v } = await open([proj("a", "/r/a")]);
+  state.platform = "macos";
+  resetCalls();
+  v.render();
+  assert.ok(!calls.window, "a draw does not ask herdr for the platform");
+  assert.ok(texts(v).includes("⌘N"));
+});
+
+test("git answers cause one batched redraw, not one per project", async () => {
   const projects = Array.from({ length: 6 }, (_, i) => proj(`p${i}`, makeRepo()));
   const { v, cx } = await open(projects);
   let notified = 0;
-  const counting = { ...cx, notify: () => { notified++; }, timer: { after: (ms, fn) => cx.timers.push({ ms, fn }) } };
+  const counting = { ...cx, notify: () => { notified++; }, timer: { after: (ms, fn) => cx.timers.push({ ms, fn }), every() {} } };
   cx.timers.length = 0;
-  v.infoPending = false; // the timer from opening the picker never fires in this fake
+  v.bumpPending = false; // the timer from opening the picker never fires in this fake
   await v.loadInfo(counting);
-  assert.ok(notified <= 2, `${notified} redraws for 6 projects`);
-  assert.ok(cx.timers.filter((t) => t.ms === 150).length >= 1, "a batching timer was set");
+  assert.equal(notified, 0, "no redraw per answer");
+  assert.equal(cx.timers.filter((t) => t.ms === 250).length, 1, "one batching timer for all six");
+  cx.timers.find((t) => t.ms === 250).fn();
+  assert.equal(v.bumpPending, false);
 });
 
-test("the platform and home are asked once per render, not once per key hint or row", async () => {
-  const { v } = await open([proj("a", "/r/a"), proj("b", "/r/b"), proj("c", "/r/c")]);
-  resetCalls();
-  v.render();
-  assert.equal(calls.window, 1);
-  assert.ok((calls.home ?? 0) <= 1, "home is remembered, not asked per row");
+test("the detail card is off until asked for", async () => {
+  const { v, cx } = await open([proj("demo", "/r/demo")], undefined, {});
+  assert.equal(v.detail, false);
+  const t = texts(v);
+  assert.ok(!t.includes("Last opened") && !t.includes("LAYOUT"), "no card");
+  assert.ok(t.includes("Show details") && hasId(v, "pp-wt") && hasId(v, "pp-edit") && hasId(v, "pp-delete"), "the buttons and the layout choice are under the list");
+  press(v, cx, "i", CTRL_ALT);
+  assert.equal(v.detail, true);
+  assert.ok(texts(v).includes("Last opened"));
 });

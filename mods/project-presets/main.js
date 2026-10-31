@@ -14,10 +14,9 @@ import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayou
 const RECENT = "project-presets.recent";
 const DETAIL = "project-presets.detail"; // false: hide the detail card (kept between sessions)
 // Shortcut hints: ⌘ on macOS (Option+letter types a character there), alt elsewhere.
-// Calls into herdr (window, home, shared, spaces) are not free, and a render draws every row: each is asked once per
-// render (`this.frame`) or remembered (the platform, until the next render).
-let platformCache;
-const mac = () => (platformCache ??= window()?.platform ?? "") === "macos";
+// The platform, copied from herdr with the rest of the snapshot (see takeSnapshot).
+let platformNow = "";
+const mac = () => platformNow === "macos";
 let homeDir;
 const homeOf = () => (homeDir ??= home());
 const key = (letter, other = "alt") => (mac() ? `⌘${letter.toUpperCase()}` : `${other}+${letter}`);
@@ -67,7 +66,9 @@ export default class ProjectPresets extends View {
     this.overlay = props()?.overlay;
     this.projects = [];
     this.layouts = [];
-    this.detail = shared(DETAIL) !== false; // the detail card beside the list
+    this.refreshSnap();
+    cx.timer.every(3000, (cx) => { if (this.refreshSnap()) cx.notify(); });
+    this.detail = shared(DETAIL) === true; // the detail card beside the list: off until asked for (ctrl+alt+I), it makes the popup slow
     this.info = {}; // folder → { branch, dirty, worktrees } (null: not readable), filled in after the list shows
     this.layoutPick = null; // null: each project's own layout; "": none; else a layout name (set only when it differs from the project's own)
     this.raw = null;
@@ -85,7 +86,7 @@ export default class ProjectPresets extends View {
 
     this.agents = [];
     this.allAgents = []; // every agent herdr knows plus the usual ones, installed or not: all are offered, and a project may name one this machine lacks
-    knownAgents().then((a) => { this.allAgents = agentOptions(a); this.agents = this.allAgents; cx.notify(); }).catch((e) => logError("knownAgents", e));
+    knownAgents().then((a) => { this.allAgents = agentOptions(a); this.agents = this.allAgents; this.bump(cx); }).catch((e) => logError("knownAgents", e));
     initLog();
     this.reload(cx, async () => { const d = await readDemo(); if (d) this.applyDemo(d); });
   }
@@ -125,6 +126,14 @@ export default class ProjectPresets extends View {
     });
   }
 
+  /** A redraw for background work (git answers, the agent list): at most one every 250 ms. Herdr cuts a slow draw off when
+   *  another is asked for, so a stream of redraws can keep the popup from ever finishing one. */
+  bump(cx) {
+    if (this.bumpPending) return;
+    this.bumpPending = true;
+    cx.timer.after(250, () => { this.bumpPending = false; cx.notify(); });
+  }
+
   /** Branch, changed files and worktree count for each project, three at a time so the list stays quick. */
   async loadInfo(cx) {
     const token = (this.infoToken = (this.infoToken ?? 0) + 1);
@@ -134,15 +143,10 @@ export default class ProjectPresets extends View {
         if (this.infoToken !== token || this.closing) return;
         const folder = projectFolder(p);
         this.info[folder] = await gitSummary(folder);
-        // A redraw per answer would repaint the whole list for each project: batch them.
-        if (!this.infoPending) {
-          this.infoPending = true;
-          cx.timer.after(150, () => { this.infoPending = false; cx.notify(); });
-        }
       }
     };
     await Promise.all([worker(), worker(), worker()]);
-    cx.notify();
+    this.bump(cx);
   }
 
   /** Puts the picker in the view a demo file names (see demo.js). */
@@ -179,13 +183,39 @@ export default class ProjectPresets extends View {
 
   query() { return this.search.value(); }
 
+  // ---- herdr's live data -------------------------------------------------
+
+  /** The herdr data a draw needs, copied. Herdr draws a view again whenever live data it read changes (spaces, agents,
+   *  shared state), and while an agent works that is constantly: a draw that read the live data was redrawn over and
+   *  over, and a draw that takes a while is cut off when the next one is asked for. A draw reads this copy instead. */
+  takeSnapshot() {
+    const colors = shared("space.colors");
+    return {
+      spaces: spaces().filter((s) => !s.machine).map((s) => ({ id: s.id, folder: s.folder, status: s.status })),
+      colors: colors ? { ...colors } : colors,
+      recent: { ...(shared(RECENT) ?? {}) },
+      platform: window()?.platform ?? "",
+    };
+  }
+
+  /** Takes a new snapshot; true when something in it changed (the caller then asks for a draw). */
+  refreshSnap() {
+    const next = this.takeSnapshot();
+    const key = JSON.stringify(next);
+    if (key === this.snapKey) return false;
+    this.snap = next;
+    this.snapKey = key;
+    platformNow = next.platform;
+    return true;
+  }
+
   // ---- list -------------------------------------------------------------
 
-  rows(recent) {
+  rows() {
     if (this.frame) return this.frame.rows; // while rendering, every caller gets the same list
-    recent ??= shared(RECENT) ?? {};
+    const recent = this.snap.recent;
     const q = this.query();
-    const open = spaces().filter((s) => !s.machine); // once, not once per project
+    const open = this.snap.spaces;
     const rows = this.projects.map((p) => {
       const score = Math.max(fuzzy(q, p.name), fuzzy(q, p.group), fuzzy(q, basename(p.path)) - 1);
       const folder = projectFolder(p);
@@ -222,9 +252,8 @@ export default class ProjectPresets extends View {
    *  one this launch uses lit; for a second after a change the lit one turns bold with an accent ring. */
   footer(t, p, list) {
     const hints = list
-      ? [["Click", "selects"], ["Double-click / Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"], [LAYOUT_HINT(), "layout"], [DETAIL_HINT(), this.detail ? "hide details" : "show details"]]
+      ? [["Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"], [LAYOUT_HINT(), "layout"], [DETAIL_HINT(), "details"]]
       : [["Enter", "creates"], ["Esc", "back"]];
-    const dot = () => div().text_color(t.dim).child("·");
     const current = this.layoutNameFor(p);
     const lit = this.layoutLit;
     const choice = (name, label) => {
@@ -233,11 +262,10 @@ export default class ProjectPresets extends View {
         .border_color(on ? (lit ? t.accent : t.solid) : t.input).bg(on ? t.solid : t.raised)
         .text_color(on ? t.solid_foreground : t.dim).when(on, (el) => (lit ? el.font_bold() : el.font_semibold())).child(label);
     };
-    const hintLine = h_flex().gap(6).items_baseline().flex_wrap().text_size(FOOTER_SIZE)
-      .children(hints.flatMap(([k, w], i) => [
-        ...(i ? [dot()] : []),
-        h_flex().gap(4).child(div().font_semibold().text_color(t.foreground).child(k)).child(div().text_color(t.dim).child(w)),
-      ]));
+    // Every element a render builds costs time, and herdr cuts a slow render off: one row, a bold key and a plain
+    // string per hint, not a box with two boxes inside.
+    const hintLine = h_flex().gap(5).items_baseline().flex_wrap().text_size(FOOTER_SIZE).text_color(t.dim)
+      .children(hints.flatMap(([k, w], i) => [div().font_semibold().text_color(t.foreground).child(k), i < hints.length - 1 ? `${w}  ·` : w]));
     if (list && this.detail) return hintLine; // the detail card has the layout choice
     return v_flex().gap(8)
       .child(hintLine)
@@ -561,10 +589,8 @@ export default class ProjectPresets extends View {
   render() {
     const cx = this.cx;
     const t = theme();
-    platformCache = undefined;
     this.frame = null;
-    const recent = shared(RECENT) ?? {};
-    this.frame = { rows: this.mode === "list" ? this.rows(recent) : [], colors: shared("space.colors"), recent };
+    this.frame = { rows: this.mode === "list" ? this.rows() : [] };
     let body;
     try {
       body = { list: () => this.renderList(t, cx), edit: () => this.renderEdit(t, cx), worktrees: () => this.renderWorktrees(t, cx), name: () => this.renderName(t), busy: () => this.renderBusy(t) }[this.mode]();
@@ -607,7 +633,7 @@ export default class ProjectPresets extends View {
     return h_flex().id(id).gap(lead ? 6 : 0).h(32).px(14).items_center().rounded(8).border_1()
       .border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
-      .hover((s) => s.opacity(0.88)).on_click(this.guard(`button ${id}`, (...a) => { log("debug", "click", { id }); return action(...a); }))
+      .on_click(this.guard(`button ${id}`, (...a) => { log("debug", "click", { id }); return action(...a); }))
       .when(Boolean(lead), (el) => el.child(lead)).child(text);
   }
 
@@ -622,7 +648,7 @@ export default class ProjectPresets extends View {
     const tile = h_flex().size(size).flex_none().rounded(5).items_center().justify_center().text_size(size * 0.58).font_bold();
     const initial = [...(p.name ?? "")][0]?.toUpperCase() ?? "?";
     if (!space) return tile.border_1().border_color(t.input).text_color(t.dim).child(initial);
-    return tile.bg(spaceColor(this.frame ? this.frame.colors : shared("space.colors"), space.id, t)).text_color("#ffffff").child(initial);
+    return tile.bg(spaceColor(this.snap.colors, space.id, t)).text_color("#ffffff").child(initial);
   }
 
   /** A small outlined label. */
@@ -650,46 +676,40 @@ export default class ProjectPresets extends View {
     const card = v_flex().w(CARD).flex_none().gap(10).p(14).rounded(12).border_1().border_color(t.input).bg(t.raised);
     if (!r) return card.child(div().text_color(t.dim).text_size(12).child("Nothing selected."));
     const p = r.p;
-    const folder = projectFolder(p);
-    const info = this.info[folder];
+    const info = this.info[projectFolder(p)];
     const name = commandName(p.startup.agent);
     const program = name && this.allAgents.find((a) => a.key === name || commandName((a.run ?? []).join(" ")) === name);
-    const kv = (k, v) => h_flex().gap(10).items_start().text_size(12)
-      .child(div().w(84).flex_none().text_color(t.dim).child(k))
-      .child(div().flex_1().min_w(0).text_color(t.foreground).child(v));
+    // Each element a render builds costs time, and herdr cuts a slow render off: a row is a label and a plain string.
+    const kv = (k, v) => h_flex().gap(10).text_size(12).text_color(t.foreground).child(div().w(84).text_color(t.dim).child(k)).child(v);
     const current = this.layoutNameFor(p);
     const choices = [{ name: "", label: "Agent only", panes: [{ type: "agent" }] }, ...this.layouts];
     const [what, openLabel] = enterAction(p.worktree.mode);
     const shown = choices.find((c) => c.name === current);
-    const dirtyText = info == null ? "…" : info.dirty ? `${info.dirty} file${info.dirty > 1 ? "s" : ""} modified` : "clean";
+    const dirty = info == null ? "…" : info.dirty ? `${info.dirty} file${info.dirty > 1 ? "s" : ""} modified` : "clean";
     return card
-      .child(h_flex().gap(10).items_center().flex_wrap()
+      .child(h_flex().gap(10).items_center()
         .child(this.avatar(t, p, r.space, 24))
         .child(div().text_size(16).font_semibold().text_color(t.foreground).child(p.name))
-        .when(Boolean(r.space), (el) => el.child(this.tag(t, r.space.status === "working" ? "agent working" : "open", r.space.status === "working" ? t.working : t.done)))
-        .when(p.pinned, (el) => el.child(this.tag(t, "pinned", t.dim, t.input))))
-      .child(v_flex().gap(4)
-        .child(kv("Agent", h_flex().gap(6).items_center().child(this.agentIcon(t, p, 14)).child(div().child(program?.name ?? (name || "plain shell")))))
-        .when(Boolean(p.group), (el) => el.child(kv("Group", p.group)))
+        .when(Boolean(r.space), (el) => el.child(this.tag(t, r.space.status === "working" ? "agent working" : "open", r.space.status === "working" ? t.working : t.done))))
+      .child(v_flex().gap(3)
+        .child(kv("Agent", program?.name ?? (name || "plain shell")))
         .child(kv("Branch", info?.branch ?? "…"))
-        .child(kv("Changes", info?.dirty ? div().text_color(t.working).child(dirtyText) : dirtyText))
+        .child(kv("Changes", dirty))
         .child(kv("Worktrees", info == null ? "…" : String(info.worktrees)))
-        .child(kv("Last opened", ago((this.frame?.recent ?? shared(RECENT) ?? {})[p.path]))))
-      .child(v_flex().gap(6)
-        .child(h_flex().items_center().child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(`LAYOUT${this.layoutPick !== null ? " · PICKED" : ""}`))
-          .child(div().px(6).rounded(5).border_1().border_color(t.input).text_size(10.5).text_color(t.foreground).child(LAYOUT_HINT())))
-        .child(h_flex().gap(8).items_start().flex_wrap().children(choices.map((c, i) => {
-          const on = c.name === current;
-          const lit = on && this.layoutLit;
-          return v_flex().id(`pp-lay-${i}`).gap(4).p(6).rounded(9).border_1().cursor_pointer()
-            .border_color(on ? (lit ? t.accent : t.solid) : t.input).bg(on ? t.selected : t.background)
-            .on_click(this.guard("layout click", () => { this.layoutPick = c.name === (p.startup.layout ?? "") ? null : c.name; cx.notify(); }))
-            .child(this.layoutThumb(t, c, on))
-            .child(div().text_size(10.5).max_w(72).text_color(on ? t.foreground : t.dim).when(on, (el) => (lit ? el.font_bold() : el.font_semibold())).child(c.label ?? c.name))
-            .when(c.name === (p.startup.layout ?? ""), (el) => el.child(div().text_size(9.5).text_color(t.dim).child("project default")));
-        }))))
+        .child(kv("Last opened", ago(this.snap.recent[p.path]))))
+      .child(h_flex().items_center().child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(`LAYOUT${this.layoutPick !== null ? " · PICKED" : ""}`))
+        .child(div().text_size(10.5).text_color(t.dim).child(LAYOUT_HINT())))
+      .child(h_flex().gap(8).items_start().children(choices.map((c, i) => {
+        const on = c.name === current;
+        const lit = on && this.layoutLit;
+        return v_flex().id(`pp-lay-${i}`).gap(4).p(6).rounded(9).border_1().cursor_pointer()
+          .border_color(on ? (lit ? t.accent : t.solid) : t.input).bg(on ? t.selected : t.background)
+          .on_click(this.guard("layout click", () => { this.layoutPick = c.name === (p.startup.layout ?? "") ? null : c.name; cx.notify(); }))
+          .child(this.layoutThumb(t, c, on))
+          .child(div().text_size(10.5).max_w(72).text_color(on ? t.foreground : t.dim).child(c.label ?? c.name));
+      })))
       .child(div().text_size(12).text_color(t.dim).child(`Enter ${what}${shown && shown.name ? ` and opens ${(shown.label ?? shown.name).toLowerCase()}` : " and opens the agent alone"}.`))
-      .child(h_flex().gap(8).items_center()
+      .child(h_flex().gap(8)
         .child(this.button(t, "pp-open", openLabel, true, () => { this.activate(false); cx.notify(); }))
         .child(this.button(t, "pp-checkout", "Checkout", false, () => { this.activate(true); cx.notify(); })))
       .child(this.actionButtons(t, cx));
