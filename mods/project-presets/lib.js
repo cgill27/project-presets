@@ -202,3 +202,71 @@ export function agentOptions(known) {
   const have = (a) => (known ?? []).some((k) => k.key === a.key || commandName((k.run ?? []).join(" ")) === a.key);
   return [...(known ?? []), ...FALLBACK_AGENTS.filter((a) => !have(a)).map((a) => ({ ...a, installed: false }))];
 }
+
+// ---- the picker's list and detail card ----------------------------------------------------------
+
+/** "just now", "12 min ago", "3 hours ago", "yesterday", "5 days ago", "2 weeks ago"; "never" without a time. */
+export function ago(ts, now = Date.now()) {
+  if (!ts) return "never";
+  const m = Math.max(0, Math.floor((now - ts) / 60000));
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hour${h > 1 ? "s" : ""} ago`;
+  const d = Math.floor(h / 24);
+  if (d === 1) return "yesterday";
+  if (d < 14) return `${d} days ago`;
+  if (d < 60) return `${Math.floor(d / 7)} weeks ago`;
+  return `${Math.floor(d / 30)} months ago`;
+}
+
+/** The list as shown: section headers (Open now, Pinned, Everything else) and the rows between them, each row
+ *  keeping its index into `rows`. No headers while searching (the order is then by match) or when only one
+ *  section has anything in it. */
+export function listItems(rows, searching) {
+  const parts = [
+    ["Open now", (r) => r.space],
+    ["Pinned", (r) => !r.space && r.p.pinned],
+    ["Everything else", (r) => !r.space && !r.p.pinned],
+  ].map(([title, test]) => ({ title, rows: rows.map((r, index) => ({ r, index })).filter((x) => test(x.r)) })).filter((x) => x.rows.length);
+  if (searching || parts.length < 2) return rows.map((r, index) => ({ row: r, index }));
+  return parts.flatMap((x) => [{ header: x.title }, ...x.rows.map(({ r, index }) => ({ row: r, index }))]);
+}
+
+/** Where a layout's panes sit, as fractions of its box: [{ name, x, y, w, h }]. Each split halves the pane it
+ *  comes from (the new pane takes the right or bottom half). A broken layout draws as the agent alone. */
+export function layoutRects(layout) {
+  let plan = [];
+  try { plan = layoutPlan(layout); } catch { return [{ name: "agent", x: 0, y: 0, w: 1, h: 1 }]; }
+  const rects = [{ name: layout?.panes?.[0]?.name ?? "agent", x: 0, y: 0, w: 1, h: 1 }];
+  for (const pane of plan) {
+    const from = rects.find((r) => r.name === pane.from);
+    if (!from) continue;
+    if (pane.direction === "right") {
+      const half = from.w / 2;
+      rects.push({ name: pane.name, x: from.x + half, y: from.y, w: half, h: from.h });
+      from.w = half;
+    } else {
+      const half = from.h / 2;
+      rects.push({ name: pane.name, x: from.x, y: from.y + half, w: from.w, h: half });
+      from.h = half;
+    }
+  }
+  return rects;
+}
+
+/** What Enter does for a worktree mode, and the label of the main button. */
+export const enterAction = (mode) => mode === "never" ? ["opens the checkout", "Open checkout"] : mode === "always" ? ["creates a new worktree", "Create worktree"] : ["asks for a branch name", "Open…"];
+
+// ---- space colors -----------------------------------------------------------------------------
+
+// What herdr's space avatars look like for a stored color name (the sidebar's `spaces` mod draws them
+// the same way and says every mod that draws space avatars should): one strong color per hue.
+export const SPACE_MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
+
+/** The avatar color of a space from herdr's shared `space.colors` ({ spaceId: "ansi4" | "#rrggbb" }); teal until herdr
+ *  has given it one. `theme` supplies a color name SPACE_MARK doesn't know. */
+export function spaceColor(colors, id, theme = {}) {
+  const c = (colors ?? {})[id] ?? "ansi6";
+  return c.startsWith("#") ? c : (SPACE_MARK[c] ?? theme[c] ?? SPACE_MARK.ansi6);
+}

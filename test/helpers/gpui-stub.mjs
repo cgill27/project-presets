@@ -27,8 +27,9 @@ export const image = (path) => make("image", path);
 export const View = class {};
 export const Scrollbar = { vertical: (id) => make("scrollbar", id) };
 export class VirtualListScrollHandle { static new() { return new VirtualListScrollHandle(); } scroll_to_item() {} }
-export const v_virtual_list = (id, count, _h, _key, renderRange) => {
+export const v_virtual_list = (id, count, sizes, _key, renderRange) => {
   const el = make("virtual_list", id);
+  el.sizes = sizes;
   el.children(renderRange({ start: 0, end: count }));
   return el;
 };

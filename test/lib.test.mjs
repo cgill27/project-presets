@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fuzzy, slug, expand, branchName, expandHome, splitList, normalize, splitArgs, basename, parseWorktrees, fuzzyPositions, highlightRuns, commandName, agentOptions, allLayouts, layoutPlan, nextLayout, inFolder, BUILTIN_LAYOUTS, dateStamp, timeStamp, shortHome, joinList, blankProject } from "../mods/project-presets/lib.js";
+import { fuzzy, slug, expand, branchName, expandHome, splitList, normalize, splitArgs, basename, parseWorktrees, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, SPACE_MARK, allLayouts, layoutPlan, nextLayout, inFolder, BUILTIN_LAYOUTS, dateStamp, timeStamp, shortHome, joinList, blankProject } from "../mods/project-presets/lib.js";
 
 test("fuzzy matches subsequences and ranks tighter matches higher", () => {
   assert.equal(fuzzy("zzz", "herdr"), -1);
@@ -215,4 +215,64 @@ test("agentOptions keeps herdr's agents and adds the usual ones it lacks, marked
   assert.deepEqual(list.slice(2).map((a) => a.key), ["codex", "opencode", "pi"]);
   assert.ok(list.slice(2).every((a) => a.installed === false && a.icon === `icons/${a.key}.svg`));
   assert.deepEqual(agentOptions(undefined).map((a) => a.key), ["claude", "codex", "opencode", "hermes", "pi"]);
+});
+
+test("ago words", () => {
+  const now = Date.parse("2026-10-31T12:00:00Z");
+  const back = (ms) => ago(now - ms, now);
+  assert.equal(ago(undefined, now), "never");
+  assert.equal(back(10_000), "just now");
+  assert.equal(back(12 * 60_000), "12 min ago");
+  assert.equal(back(60 * 60_000), "1 hour ago");
+  assert.equal(back(5 * 3600_000), "5 hours ago");
+  assert.equal(back(30 * 3600_000), "yesterday");
+  assert.equal(back(3 * 86400_000), "3 days ago");
+  assert.equal(back(15 * 86400_000), "2 weeks ago");
+  assert.equal(back(90 * 86400_000), "3 months ago");
+  assert.equal(ago(now + 5000, now), "just now", "a clock slightly ahead is not negative");
+});
+
+test("listItems puts section headers between groups, and drops them when searching or with one group", () => {
+  const rows = [
+    { p: { name: "open", pinned: false }, space: { id: 1 } },
+    { p: { name: "pin", pinned: true }, space: null },
+    { p: { name: "a", pinned: false }, space: null },
+    { p: { name: "b", pinned: false }, space: null },
+  ];
+  const items = listItems(rows, false);
+  assert.deepEqual(items.map((i) => i.header ?? `${i.row.p.name}#${i.index}`), ["Open now", "open#0", "Pinned", "pin#1", "Everything else", "a#2", "b#3"]);
+  assert.deepEqual(listItems(rows, true).map((i) => i.index), [0, 1, 2, 3]);
+  assert.ok(listItems(rows, true).every((i) => !i.header));
+  assert.ok(listItems(rows.slice(2), false).every((i) => !i.header), "one section: no header");
+  assert.deepEqual(listItems([], false), []);
+  const open = [{ p: { pinned: true }, space: { id: 1 } }, { p: { pinned: false }, space: null }];
+  assert.deepEqual(listItems(open, false).map((i) => i.header ?? "row"), ["Open now", "row", "Everything else", "row"], "an open pinned project is under Open now");
+});
+
+test("layoutRects divides the pane each split comes from", () => {
+  assert.deepEqual(layoutRects(undefined), [{ name: "agent", x: 0, y: 0, w: 1, h: 1 }]);
+  assert.deepEqual(layoutRects({ name: "s", panes: [{ type: "agent" }] }), [{ name: "agent", x: 0, y: 0, w: 1, h: 1 }]);
+  const below = layoutRects(BUILTIN_LAYOUTS.find((l) => l.name === "agent-terminal"));
+  assert.deepEqual(below, [{ name: "agent", x: 0, y: 0, w: 1, h: 0.5 }, { name: "pane2", x: 0, y: 0.5, w: 1, h: 0.5 }]);
+  const three = layoutRects({ name: "t", panes: [{ type: "agent" }, { name: "files", command: "yazi", direction: "right" }, { name: "term", type: "shell", direction: "down" }] });
+  assert.deepEqual(three.map((r) => [r.name, r.x, r.y, r.w, r.h]), [["agent", 0, 0, 0.5, 1], ["files", 0.5, 0, 0.5, 0.5], ["term", 0.5, 0.5, 0.5, 0.5]]);
+  const from = layoutRects({ name: "f", panes: [{ type: "agent" }, { name: "a", direction: "right" }, { name: "b", direction: "down", from: "agent" }] });
+  assert.deepEqual(from.map((r) => [r.name, r.x, r.y, r.w, r.h]), [["agent", 0, 0, 0.5, 0.5], ["a", 0.5, 0, 0.5, 1], ["b", 0, 0.5, 0.5, 0.5]]);
+  assert.deepEqual(layoutRects({ name: "bad", panes: [{ type: "agent" }, { type: "shell" }] }), [{ name: "agent", x: 0, y: 0, w: 1, h: 1 }]);
+});
+
+test("enterAction describes each worktree mode", () => {
+  assert.deepEqual(enterAction("never"), ["opens the checkout", "Open checkout"]);
+  assert.deepEqual(enterAction("always"), ["creates a new worktree", "Create worktree"]);
+  assert.deepEqual(enterAction("ask"), ["asks for a branch name", "Open…"]);
+  assert.deepEqual(enterAction(undefined), ["asks for a branch name", "Open…"]);
+});
+
+test("spaceColor reads herdr's stored names and hex colors, and defaults to teal", () => {
+  assert.equal(spaceColor({ a: "ansi4" }, "a"), SPACE_MARK.ansi4);
+  assert.equal(spaceColor({ a: "#abcdef" }, "a"), "#abcdef");
+  assert.equal(spaceColor({}, "a"), SPACE_MARK.ansi6);
+  assert.equal(spaceColor(undefined, "a"), SPACE_MARK.ansi6);
+  assert.equal(spaceColor({ a: "ansi9" }, "a", { ansi9: "#010203" }), "#010203");
+  assert.equal(spaceColor({ a: "nope" }, "a", {}), SPACE_MARK.ansi6);
 });

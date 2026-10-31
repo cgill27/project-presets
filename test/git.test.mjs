@@ -405,6 +405,36 @@ test("listWorktrees finds the open space even when it was opened through a symli
   assert.equal(item.space?.id, "sp-link");
 });
 
+test("gitSummary reports branch, changed files and linked worktrees", async () => {
+  const dir = makeRepo({ name: "Ada" });
+  assert.deepEqual(await G.gitSummary(dir), { branch: "main", dirty: 0, worktrees: 0 });
+  writeFileSync(join(dir, "a.txt"), "changed\n");
+  writeFileSync(join(dir, "new.txt"), "new\n");
+  await G.createWorktree(project(dir), "one", note);
+  await G.createWorktree(project(dir), "two", note);
+  assert.deepEqual(await G.gitSummary(dir), { branch: "main", dirty: 2, worktrees: 2 });
+  sh(dir, "checkout", "-q", "-b", "topic");
+  assert.equal((await G.gitSummary(dir)).branch, "topic");
+  sh(dir, "commit", "-aq", "-m", "wip");
+  sh(dir, "checkout", "-q", "--detach");
+  assert.equal((await G.gitSummary(dir)).branch, "HEAD (no branch)");
+});
+
+test("gitSummary: a repo with no commits yet, and a branch with an upstream", async () => {
+  const empty = scratch("pp-empty");
+  sh(empty, "init", "-q", "-b", "trunk");
+  assert.deepEqual(await G.gitSummary(empty), { branch: "trunk", dirty: 0, worktrees: 0 });
+  const { dir } = makeClone();
+  assert.equal((await G.gitSummary(dir)).branch, "main", "no '...origin/main' in the name");
+  commit(dir, "ahead.txt");
+  assert.equal((await G.gitSummary(dir)).branch, "main", "no [ahead 1] either");
+});
+
+test("gitSummary is null for a folder that is not a checkout or is gone", async () => {
+  assert.equal(await G.gitSummary(scratch()), null);
+  assert.equal(await G.gitSummary("/no/such/folder/at/all"), null);
+});
+
 test("listWorktrees skips prunable worktrees whose folder is gone", async () => {
   const p = project(makeRepo({ name: "Ada" }));
   const wt = await G.createWorktree(p, "gone", note);

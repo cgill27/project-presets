@@ -45,13 +45,14 @@ async function open(projects, layouts) {
 const proj = (name, path, over = {}) => normalize({ name, path, git: { fetch: false }, ...over });
 const rendered = (v) => v.render();
 const texts = (v) => textOf(rendered(v));
-/** The footer's layout chips: label to the element, so a test can look at its styles. */
+/** The detail card's layout choices: label → element, so a test can look at its styles. */
 const chips = (v) => {
   const found = {};
-  for (const el of findAll(rendered(v), (e) => e.tag === "div" && e.has("rounded") && e.has("py") && e.has("border_1"))) found[textOf(el)] = el;
+  for (const el of findAll(rendered(v), (e) => /^pp-lay-/.test(e.op?.("id")?.[0] ?? ""))) found[textOf(el).replace(/project default$/, "")] = el;
   return found;
 };
-const lit = (chip) => chip.op("bg")[0] === "#solid";
+const lit = (chip) => chip.op("bg")[0] === "#selected";
+const labelOf = (chip) => findAll(chip, (e) => e.tag === "div" && e.has("text_size") && e.op("text_size")[0] === 10.5)[0];
 
 // ---------------------------------------------------------------- the list
 
@@ -89,7 +90,7 @@ test("typing highlights the matched letters of the name", async () => {
   const bold = findAll(rendered(v), (e) => e.tag === "div" && e.has("font_bold") && e.op("text_color")?.[0] === "#accent").map(textOf);
   assert.deepEqual(bold, ["ap", "g", "w"]);
   v.search.set_value("");
-  assert.deepEqual(findAll(rendered(v), (e) => e.has("font_bold")), []);
+  assert.deepEqual(findAll(rendered(v), (e) => e.tag === "div" && e.has("font_bold") && e.op("text_color")?.[0] === "#accent"), []);
 });
 
 test("arrow keys move the highlight and wrap; Escape closes", async () => {
@@ -105,17 +106,17 @@ test("arrow keys move the highlight and wrap; Escape closes", async () => {
   assert.equal(state.closed, 1);
 });
 
-test("the footer lists the keys, and the same keys work", async () => {
+test("the footer lists the keys", async () => {
   const { v } = await open([proj("a", "/r/a")]);
   const t = texts(v);
-  for (const s of ["Click", "Double-click / Enter", "Shift+Enter", "alt+n", "alt+e", "alt+w", "alt+d", "Layout", "ctrl+alt+L"]) assert.ok(t.includes(s), s);
+  for (const s of ["Click", "Double-click / Enter", "Shift+Enter", "alt+n", "alt+e", "alt+w", "alt+d", "layout", "ctrl+alt+L"]) assert.ok(t.includes(s), s);
 });
 
 // ---------------------------------------------------------------- the layout selector
 
 const LAYOUTS = [{ name: "coding", label: "Agent, files and a terminal", panes: [{ type: "agent" }, { name: "files", command: "yazi .", direction: "right" }] }];
 
-test("the selector shows every layout, with the project's own lit", async () => {
+test("the card shows every layout as a picture, with the project's own lit", async () => {
   const { v } = await open([proj("a", "/r/a", { startup: { layout: "coding" } })], LAYOUTS);
   const c = chips(v);
   assert.deepEqual(Object.keys(c), ["Agent only", "Agent + terminal below", "Agent + terminal right", "Agent, files and a terminal"]);
@@ -152,16 +153,17 @@ test("a pick counts only while it differs from the project's own layout", async 
 test("the lit chip turns bold with an accent ring for a second after a change", async () => {
   const { v, cx } = await open([proj("a", "/r/a")], LAYOUTS);
   const litChip = () => Object.values(chips(v)).find(lit);
-  assert.ok(!litChip().has("font_bold"));
+  const bold = () => labelOf(litChip()).has("font_bold");
+  assert.ok(!bold());
   press(v, cx, "l", CTRL_ALT);
-  assert.ok(litChip().has("font_bold"));
+  assert.ok(bold());
   assert.equal(litChip().op("border_color")[0], "#accent");
   const first = cx.timers.at(-1);
   press(v, cx, "l", CTRL_ALT);
   first.fn(); // the first press's timer must not end the second press's highlight
-  assert.ok(litChip().has("font_bold"));
+  assert.ok(bold());
   cx.timers.at(-1).fn();
-  assert.ok(!litChip().has("font_bold"));
+  assert.ok(!bold());
   assert.equal(litChip().op("border_color")[0], "#solid");
 });
 
@@ -501,4 +503,267 @@ test("a layout typed in the editor is saved with the project and used on the nex
   await cx.settle();
   assert.equal(state.splits.length, 1);
   assert.equal(state.splits[0].direction, "right");
+});
+
+// ---------------------------------------------------------------- sections, git chips and the detail card
+
+test("the list has Open now / Pinned / Everything else headers, and none while searching", async () => {
+  const { v } = await open([proj("zeta", "/r/z"), proj("alpha", "/r/a"), proj("pinned", "/r/p", { pinned: true }), proj("open", "/r/o")]);
+  state.spaces = [{ id: "s", folder: "/r/o", machine: null, status: "idle" }];
+  const t = texts(v);
+  for (const h of ["OPEN NOW", "PINNED", "EVERYTHING ELSE"]) assert.ok(t.includes(h), h);
+  assert.ok(t.indexOf("OPEN NOW") < t.indexOf("PINNED") && t.indexOf("PINNED") < t.indexOf("EVERYTHING ELSE"));
+  v.search.set_value("a");
+  assert.ok(!texts(v).includes("OPEN NOW"));
+});
+
+test("section headers are shorter than rows, and arrow keys skip them", async () => {
+  const { v, cx } = await open([proj("alpha", "/r/a"), proj("pinned", "/r/p", { pinned: true })]);
+  const list = findAll(rendered(v), (e) => e.tag === "virtual_list")[0];
+  assert.ok(list, "the projects list");
+  assert.equal(list.arg, "pp-projects");
+  assert.deepEqual(list.sizes, [30, 48, 30, 48], "header, row, header, row");
+  press(v, cx, "down");
+  assert.equal(v.at, 1);
+  press(v, cx, "down");
+  assert.equal(v.at, 0);
+});
+
+test("rows show the branch, changed files and worktree count once the git details load", async () => {
+  const dir = makeRepo({ name: "Ada" });
+  writeFileSync(join(dir, "a.txt"), "changed\n");
+  sh(dir, "worktree", "add", "-q", "-b", "side", join(scratch("pp-ui-wt"), "side"));
+  const { v, cx } = await open([proj("demo", dir)]);
+  assert.ok(!texts(v).includes("1 changed"), "nothing yet while loading");
+  await v.loadInfo(cx);
+  const t = texts(v);
+  assert.ok(t.includes("main") && t.includes("1 changed") && t.includes("1 wt"));
+});
+
+test("a clean project with no worktrees shows only its branch; an unreadable folder shows no chips", async () => {
+  const { v, cx } = await open([proj("clean", makeRepo()), proj("gone", "/no/such/dir")]);
+  await v.loadInfo(cx);
+  const rowsText = findAll(rendered(v), (e) => /^pp-\d+$/.test(e.op?.("id")?.[0] ?? "")).map(textOf);
+  const clean = rowsText.find((x) => x.includes("clean"));
+  assert.ok(clean.includes("main") && !clean.includes("changed") && !clean.includes("wt"));
+  const gone = rowsText.find((x) => x.includes("gone"));
+  assert.ok(!gone.includes("main"));
+});
+
+test("a working agent's stripe pulses and an open space gets a status stripe", async () => {
+  const { v } = await open([proj("busy", "/r/b"), proj("idle", "/r/i"), proj("closed", "/r/c")]);
+  state.spaces = [{ id: "1", folder: "/r/b", machine: null, status: "working" }, { id: "2", folder: "/r/i", machine: null, status: "idle" }];
+  const rows = findAll(rendered(v), (e) => /^pp-\d+$/.test(e.op?.("id")?.[0] ?? ""));
+  const byName = (n) => rows.find((r) => textOf(r).includes(n));
+  const pulses = (r) => findAll(r, (e) => e.has("loop")).length;
+  const stripes = (r) => findAll(r, (e) => e.has("absolute") && e.op("w")?.[0] === 3).length;
+  assert.equal(pulses(byName("busy")), 1);
+  assert.equal(pulses(byName("idle")), 0);
+  assert.equal(stripes(byName("busy")), 1);
+  assert.equal(stripes(byName("idle")), 1);
+  assert.equal(stripes(byName("closed")), 0);
+});
+
+test("the search box shows how many projects match", async () => {
+  const { v } = await open([proj("alpha", "/r/a"), proj("beta", "/r/b"), proj("gamma", "/r/g")]);
+  assert.ok(texts(v).includes("3 of 3"));
+  v.search.set_value("alp");
+  assert.ok(texts(v).includes("1 of 3"));
+});
+
+test("the detail card describes the highlighted project", async () => {
+  const dir = makeRepo({ name: "Ada" });
+  writeFileSync(join(dir, "a.txt"), "x\n");
+  const { v, cx } = await open([proj("demo", dir, { group: "platform", pinned: true, startup: { agent: "claude" }, worktree: { mode: "always" } })]);
+  state.spaces = [{ id: "s", folder: dir, machine: null, status: "working" }];
+  await v.loadInfo(cx);
+  const t = texts(v);
+  for (const s of ["demo", "agent working", "pinned", "Agent", "Claude Code", "Group", "platform", "Branch", "main", "Changes", "1 file modified", "Worktrees", "Last opened", "never",
+    "Enter creates a new worktree and opens the agent alone.", "Create worktree", "Checkout", "LAYOUT"]) assert.ok(t.includes(s), s);
+});
+
+test("the card follows the highlight and says what each mode does", async () => {
+  const { v, cx } = await open([proj("a", "/r/a", { worktree: { mode: "never" } }), proj("b", "/r/b", { worktree: { mode: "ask" }, startup: { layout: "agent-terminal" } })]);
+  assert.match(texts(v), /Enter opens the checkout and opens the agent alone\./);
+  press(v, cx, "down");
+  assert.match(texts(v), /Enter asks for a branch name and opens agent \+ terminal below\./);
+  assert.ok(texts(v).includes("Open…"));
+});
+
+test("Last opened shows when the project was last used", async () => {
+  const { v } = await open([proj("demo", "/r/demo")]);
+  state.platform = "linux";
+  const { setShared } = await import("./helpers/herdr-stub.mjs");
+  setShared("project-presets.recent", { "/r/demo": Date.now() - 12 * 60_000 });
+  assert.ok(texts(v).includes("12 min ago"));
+});
+
+test("clicking a layout picture picks it for this launch; clicking the project's own clears the pick", async () => {
+  const { v, cx } = await open([proj("a", "/r/a", { startup: { layout: "agent-terminal" } })]);
+  const click = (label) => chips(v)[label].op("on_click")[0]();
+  click("Agent only");
+  assert.equal(v.layoutPick, "");
+  assert.ok(texts(v).includes("LAYOUT · PICKED"));
+  click("Agent + terminal below");
+  assert.equal(v.layoutPick, null);
+  assert.ok(!texts(v).includes("PICKED"));
+  assert.ok(chips(v)["Agent + terminal below"] && texts(v).includes("project default"));
+});
+
+test("the card's layout pictures draw each layout's panes", async () => {
+  const { v } = await open([proj("a", "/r/a")], LAYOUTS);
+  const thumb = (label) => findAll(chips(v)[label], (e) => e.tag === "div" && e.has("absolute"));
+  assert.equal(thumb("Agent only").length, 1);
+  assert.equal(thumb("Agent + terminal below").length, 2);
+  assert.equal(thumb("Agent, files and a terminal").length, 2);
+});
+
+test("the Open and Checkout buttons in the card start the project", async () => {
+  const dir = makeRepo();
+  const { v, cx } = await open([proj("demo", dir, { worktree: { mode: "always" } })]);
+  const button = (id) => findAll(rendered(v), (e) => e.op?.("id")?.[0] === id)[0];
+  button("pp-checkout").op("on_click")[0]();
+  await cx.settle();
+  assert.equal(spaceNew()[0].args.folder, dir);
+  assert.equal(state.closed, 1);
+});
+
+test("with no projects the card says nothing is selected", async () => {
+  const { v } = await open([]);
+  assert.ok(texts(v).includes("Nothing selected."));
+});
+
+test("the popup is wide enough for the list and the card", () => {
+  const mod = JSON.parse(readFileSync(new URL("../mods/project-presets/mod.json", import.meta.url), "utf8"));
+  assert.ok(mod.overlay.width >= 1000);
+});
+
+// ---------------------------------------------------------------- turning the detail card off
+
+const hasId = (v, id) => findAll(rendered(v), (e) => e.op?.("id")?.[0] === id).length > 0;
+
+test("ctrl+alt+I hides the detail card, and the buttons and layout choice move under the list", async () => {
+  const { v, cx } = await open([proj("demo", "/r/demo", { worktree: { mode: "always" } })], LAYOUTS);
+  assert.ok(texts(v).includes("Last opened"));
+  press(v, cx, "i", CTRL_ALT);
+  const t = texts(v);
+  assert.ok(!t.includes("Last opened") && !t.includes("Enter creates a new worktree"), "no card");
+  assert.ok(hasId(v, "pp-wt") && hasId(v, "pp-edit") && hasId(v, "pp-delete") && hasId(v, "pp-add"), "the action buttons are under the list");
+  for (const s of ["Layout", "Agent only", "Agent + terminal below", "Agent, files and a terminal", "show details"]) assert.ok(t.includes(s), s);
+  assert.deepEqual(findAll(rendered(v), (e) => /^pp-lay-/.test(e.op?.("id")?.[0] ?? "")), [], "no layout pictures");
+});
+
+test("with the card on, the buttons are in the card only once and the layout choice is the pictures", async () => {
+  const { v } = await open([proj("demo", "/r/demo")]);
+  for (const id of ["pp-wt", "pp-edit", "pp-delete", "pp-open", "pp-checkout", "pp-add", "pp-details"]) {
+    assert.equal(findAll(rendered(v), (e) => e.op?.("id")?.[0] === id).length, 1, id);
+  }
+  assert.ok(texts(v).includes("hide details"));
+});
+
+test("a bare alt+I or ctrl+I does nothing", async () => {
+  const { v, cx } = await open([proj("demo", "/r/demo")]);
+  press(v, cx, "i", { alt: true });
+  press(v, cx, "i", { control: true });
+  assert.equal(v.detail, true);
+});
+
+test("the choice is remembered: a picker opened later starts the same way", async () => {
+  const { v, cx } = await open([proj("demo", "/r/demo")]);
+  press(v, cx, "i", CTRL_ALT);
+  assert.equal(v.detail, false);
+  const { shared } = await import("./helpers/herdr-stub.mjs");
+  assert.equal(shared("project-presets.detail"), false);
+  const pending = [];
+  const cx2 = { timer: { after() {} }, spawn: (fn) => { const p = fn(cx2); pending.push(p); return p; }, focus_handle: () => ({}), notify() {}, stop_propagation() {} };
+  const again = new Picker();
+  again.init({}, cx2);
+  await Promise.all(pending);
+  assert.equal(again.detail, false);
+  assert.ok(!texts(again).includes("Last opened"));
+  press(again, cx2, "i", CTRL_ALT);
+  assert.equal(again.detail, true);
+  assert.ok(texts(again).includes("Last opened"));
+});
+
+test("the Hide details button toggles it both ways", async () => {
+  const { v } = await open([proj("demo", "/r/demo")]);
+  const click = () => findAll(rendered(v), (e) => e.op?.("id")?.[0] === "pp-details")[0].op("on_click")[0]();
+  click();
+  assert.equal(v.detail, false);
+  assert.ok(texts(v).includes("Show details"));
+  click();
+  assert.equal(v.detail, true);
+  assert.ok(texts(v).includes("Hide details"));
+});
+
+test("the layout key and Enter still work with the card hidden", async () => {
+  const dir = makeRepo();
+  const { v, cx } = await open([proj("demo", dir, { worktree: { mode: "never" } })], LAYOUTS);
+  press(v, cx, "i", CTRL_ALT);
+  for (let i = 0; i < 3; i++) press(v, cx, "l", CTRL_ALT); // agent-terminal, side, coding
+  assert.equal(v.layoutPick, "coding");
+  enter(v);
+  await cx.settle();
+  assert.equal(state.splits.length, 1);
+  assert.equal(state.splits[0].direction, "right");
+});
+
+test("hiding the card keeps the buttons working: Edit opens the editor", async () => {
+  const { v, cx } = await open([proj("demo", "/r/demo")]);
+  press(v, cx, "i", CTRL_ALT);
+  findAll(rendered(v), (e) => e.op?.("id")?.[0] === "pp-edit")[0].op("on_click")[0]();
+  assert.equal(v.mode, "edit");
+});
+
+test("with no projects and the card hidden there are no action buttons to press", async () => {
+  const { v, cx } = await open([]);
+  press(v, cx, "i", CTRL_ALT);
+  assert.ok(!hasId(v, "pp-wt") && !hasId(v, "pp-edit") && hasId(v, "pp-add"));
+});
+
+// ---------------------------------------------------------------- space colors
+
+const avatarOf = (el) => findAll(el, (e) => e.tag === "h_flex" && e.has("font_bold") && e.has("rounded"))[0];
+const rowOf = (v, name) => findAll(rendered(v), (e) => /^pp-\d+$/.test(e.op?.("id")?.[0] ?? "")).find((r) => textOf(r).includes(name));
+
+test("an open project's avatar has its space's color and its initial, like the sidebar's", async () => {
+  const { v } = await open([proj("alpha", "/r/a"), proj("beta", "/r/b"), proj("gamma", "/r/g"), proj("delta", "/r/d")]);
+  state.spaces = [
+    { id: "s1", folder: "/r/a", machine: null, status: "idle" },
+    { id: "s2", folder: "/r/b", machine: null, status: "idle" },
+    { id: "s3", folder: "/r/g", machine: null, status: "idle" },
+  ];
+  const { setShared } = await import("./helpers/herdr-stub.mjs");
+  setShared("space.colors", { s1: "ansi4", s2: "#123456" });
+  const a = avatarOf(rowOf(v, "alpha"));
+  assert.equal(a.op("bg")[0], "#5b8def");
+  assert.equal(textOf(a), "A");
+  assert.equal(avatarOf(rowOf(v, "beta")).op("bg")[0], "#123456", "a stored hex color is used as is");
+  assert.equal(avatarOf(rowOf(v, "gamma")).op("bg")[0], "#22a99a", "teal until herdr gives the space a color");
+});
+
+test("a project with no open space gets an outlined avatar without a color", async () => {
+  const { v } = await open([proj("delta", "/r/d")]);
+  const a = avatarOf(rowOf(v, "delta"));
+  assert.ok(!a.has("bg"));
+  assert.equal(a.op("border_color")[0], "#input");
+  assert.equal(textOf(a), "D");
+});
+
+test("the card's header repeats the avatar in the same color", async () => {
+  const { v } = await open([proj("alpha", "/r/a")]);
+  state.spaces = [{ id: "s1", folder: "/r/a", machine: null, status: "idle" }];
+  const { setShared } = await import("./helpers/herdr-stub.mjs");
+  setShared("space.colors", { s1: "ansi5" });
+  const card = findAll(rendered(v), (e) => e.tag === "v_flex" && e.has("border_1") && textOf(e).includes("LAYOUT"))[0];
+  assert.equal(avatarOf(card).op("bg")[0], "#8b7cf6");
+});
+
+test("a color name the sidebar palette lacks falls back to the theme, then to teal", async () => {
+  const { v } = await open([proj("alpha", "/r/a")]);
+  state.spaces = [{ id: "s1", folder: "/r/a", machine: null, status: "idle" }];
+  const { setShared } = await import("./helpers/herdr-stub.mjs");
+  setShared("space.colors", { s1: "ansi7" });
+  assert.equal(avatarOf(rowOf(v, "alpha")).op("bg")[0], "#ansi7", "the theme's own color");
 });

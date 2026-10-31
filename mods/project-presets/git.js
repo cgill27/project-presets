@@ -275,6 +275,21 @@ async function sendWhenReady(terminal, folder, text) {
   if (r.code !== 0) log("error", `hc send failed: ${r.stderr.split("\n")[0]}`, { terminal });
 }
 
+/** A project's branch, number of changed files and number of linked worktrees, for the picker; null when the folder
+ *  isn't a readable checkout. Three quick git calls. */
+export async function gitSummary(folder) {
+  try {
+    const st = await git(folder, ["status", "--porcelain", "-b"]);
+    if (st.code !== 0) return null;
+    const [head, ...changed] = st.stdout.split("\n").filter(Boolean);
+    // "## main...origin/main [ahead 1]", "## HEAD (no branch)", "## No commits yet on main"
+    const branch = (head ?? "").replace(/^## (No commits yet on |Initial commit on )?/, "").split("...")[0].replace(/ \[.*\]$/, "");
+    let list = await git(folder, ["worktree", "list", "--porcelain", "-z"]);
+    if (list.code !== 0) list = await git(folder, ["worktree", "list", "--porcelain"]);
+    return { branch, dirty: changed.length, worktrees: list.code === 0 ? Math.max(0, parseWorktrees(list.stdout).length - 1) : 0 };
+  } catch { return null; }
+}
+
 /** The repo's linked worktrees (not the main checkout): { path, branch, dirty, merged, space }.
  *  merged: the branch is already in <remote>/<base>, so removing it loses nothing. */
 export async function listWorktrees(project) {

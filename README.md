@@ -36,6 +36,18 @@ When it finishes you land in a new space on the new worktree, with the agent alr
 
 ![The result: a new space on cgill27/2026-10-30-add-search-page with Claude Code running and the first prompt answered](docs/screenshots/15-result.png)
 
+### Sections and the detail card
+
+The list is split into **Open now**, **Pinned** and **Everything else** (no headers while you search, or when only one group has projects). Each row starts with an avatar drawn like herdr's sidebar draws a space: a tile in the space's own color with the project's initial (an outline for a project with no open space). Then come the agent icon and, once git has answered, its branch, a `N changed` chip when files are modified, and `N wt` for linked worktrees. An open space gets a status stripe on the left edge, and the marker pulses while its agent is working. Typing highlights the letters that matched, and the search box counts matches (`3 of 12`).
+
+Beside the list, a card describes the highlighted project: agent, branch, changes, worktrees, when you last opened it, and the layout choices as small pictures of their panes (click one, or press **ctrl+alt+L**). It says what Enter will do ("Enter asks for a branch name and opens agent + terminal below") and holds the Open, Checkout, Worktrees, Edit and Delete buttons.
+
+| Layout picked for this launch | Details hidden |
+|---|---|
+| ![The detail card with a layout picked for this launch](docs/screenshots/18-layout-picked.png) | ![The list with the detail card hidden](docs/screenshots/17-details-hidden.png) |
+
+**Hide the card** with **ctrl+alt+I** (**⌘⌥I** on macOS) or the Hide details button, if it is too large or not wanted. The list then takes the whole width, the layout choice moves under it as text chips, and the buttons sit under the list. The choice is remembered. The popup is 1060 px wide for the card; change `overlay.width` in `mod.json` to make it narrower.
+
 ### Pane layouts
 
 A project can open its space with more than the agent: a terminal below it, a file manager beside it, a log tail. Name a layout in the project's **Startup → Pane layout** field, or press **ctrl+alt+L** (**⌘⌥L** on macOS) in the list or the branch-name step to pick one for this launch: it steps through none (the agent alone) and then every layout. A selector under the projects shows them all with the one this launch will use lit, and it briefly turns bold with an accent ring after each change.

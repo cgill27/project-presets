@@ -6,20 +6,24 @@ import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
 import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home } from "herdr";
 import { loadConfig, saveConfig } from "./config.js";
-import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch } from "./git.js";
+import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch, gitSummary } from "./git.js";
 import { readDemo } from "./demo.js";
 import { initLog, log, logError } from "./log.js";
-import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions } from "./lib.js";
+import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor } from "./lib.js";
 
 const RECENT = "project-presets.recent";
+const DETAIL = "project-presets.detail"; // false: hide the detail card (kept between sessions)
 // Shortcut hints: ⌘ on macOS (Option+letter types a character there), alt elsewhere.
 const mac = () => window()?.platform === "macos";
 const key = (letter, other = "alt") => (mac() ? `⌘${letter.toUpperCase()}` : `${other}+${letter}`);
 // Herdr binds a bare alt+l to moving between panes, so the layout key needs ctrl (⌘ on macOS) as well, like the open key.
 const FOOTER_SIZE = 12;
 const LAYOUT_HINT = () => (mac() ? "⌘⌥L" : "ctrl+alt+L");
+const DETAIL_HINT = () => (mac() ? "⌘⌥I" : "ctrl+alt+I");
 
 const ROW = 48;
+const HEADER = 30; // a section header in the project list
+const CARD = 340; // the detail card's width
 // Editor sections and the text fields each one shows.
 const SECTIONS = [["project", "Project"], ["worktree", "Worktree"], ["git", "Git"], ["startup", "Startup"]];
 const SECTION_FIELDS = {
@@ -58,6 +62,8 @@ export default class ProjectPresets extends View {
     this.overlay = props()?.overlay;
     this.projects = [];
     this.layouts = [];
+    this.detail = shared(DETAIL) !== false; // the detail card beside the list
+    this.info = {}; // folder → { branch, dirty, worktrees } (null: not readable), filled in after the list shows
     this.layoutPick = null; // null: each project's own layout; "": none; else a layout name (set only when it differs from the project's own)
     this.raw = null;
     this.mode = "list"; // list | edit | name | busy
@@ -110,13 +116,31 @@ export default class ProjectPresets extends View {
       }
       if (after) await after();
       cx.notify();
+      this.loadInfo(cx);
     });
+  }
+
+  /** Branch, changed files and worktree count for each project, three at a time so the list stays quick. */
+  async loadInfo(cx) {
+    const token = (this.infoToken = (this.infoToken ?? 0) + 1);
+    const queue = [...this.projects];
+    const worker = async () => {
+      for (let p = queue.shift(); p; p = queue.shift()) {
+        if (this.infoToken !== token || this.closing) return;
+        const folder = projectFolder(p);
+        this.info[folder] = await gitSummary(folder);
+        cx.notify();
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
   }
 
   /** Puts the picker in the view a demo file names (see demo.js). */
   applyDemo(d) {
     const project = this.projects.find((p) => p.name === d.project);
     if (d.query != null) this.search.set_value(d.query);
+    if (d.detail != null) this.detail = d.detail; // for the screenshot only: not kept
+    if (d.layout != null) this.layoutPick = d.layout;
     const at = () => { const i = this.rows().findIndex((r) => r.p === project); this.at = Math.max(0, i); };
     if (d.select != null) this.at = d.select;
     else if (project) at();
@@ -141,7 +165,7 @@ export default class ProjectPresets extends View {
     }
   }
 
-  close() { closeOverlay(this.overlay); }
+  close() { this.closing = true; closeOverlay(this.overlay); }
 
   query() { return this.search.value(); }
 
@@ -165,6 +189,12 @@ export default class ProjectPresets extends View {
   /** The layout name a launch of `p` uses: the picked one, else the project's own. */
   layoutNameFor(p) { return this.layoutPick ?? p.startup.layout; }
 
+  /** ctrl+alt+I: shows or hides the detail card; the choice is kept for next time. */
+  toggleDetail() {
+    this.detail = !this.detail;
+    setShared(DETAIL, this.detail);
+  }
+
   /** ctrl+alt+L: the next layout for `p`'s launch (none, then each layout). */
   cycleLayout(p) {
     const next = nextLayout(this.layouts.map((l) => l.name), this.layoutNameFor(p));
@@ -179,7 +209,7 @@ export default class ProjectPresets extends View {
    *  one this launch uses lit; for a second after a change the lit one turns bold with an accent ring. */
   footer(t, p, list) {
     const hints = list
-      ? [["Click", "selects"], ["Double-click / Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"]]
+      ? [["Click", "selects"], ["Double-click / Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"], [LAYOUT_HINT(), "layout"], [DETAIL_HINT(), this.detail ? "hide details" : "show details"]]
       : [["Enter", "creates"], ["Esc", "back"]];
     const dot = () => div().text_color(t.dim).child("·");
     const current = this.layoutNameFor(p);
@@ -190,12 +220,14 @@ export default class ProjectPresets extends View {
         .border_color(on ? (lit ? t.accent : t.solid) : t.input).bg(on ? t.solid : t.raised)
         .text_color(on ? t.solid_foreground : t.dim).when(on, (el) => (lit ? el.font_bold() : el.font_semibold())).child(label);
     };
+    const hintLine = h_flex().gap(6).items_baseline().flex_wrap().text_size(FOOTER_SIZE)
+      .children(hints.flatMap(([k, w], i) => [
+        ...(i ? [dot()] : []),
+        h_flex().gap(4).child(div().font_semibold().text_color(t.foreground).child(k)).child(div().text_color(t.dim).child(w)),
+      ]));
+    if (list && this.detail) return hintLine; // the detail card has the layout choice
     return v_flex().gap(8)
-      .child(h_flex().gap(6).items_baseline().flex_wrap().text_size(FOOTER_SIZE)
-        .children(hints.flatMap(([k, w], i) => [
-          ...(i ? [dot()] : []),
-          h_flex().gap(4).child(div().font_semibold().text_color(t.foreground).child(k)).child(div().text_color(t.dim).child(w)),
-        ])))
+      .child(hintLine)
       .child(h_flex().gap(6).items_center().flex_wrap().text_size(FOOTER_SIZE)
         .child(div().text_color(t.dim).child("Layout"))
         .child(choice("", "Agent only"))
@@ -475,13 +507,14 @@ export default class ProjectPresets extends View {
       else { this.mode = "list"; this.error = null; this.search.focus(); }
     } else if (this.mode === "list") {
       const n = this.rows().length;
-      if (k === "down" && n) { this.at = (this.at + 1) % n; this.reveal("pp-projects", this.scroll, this.at); }
-      else if (k === "up" && n) { this.at = (this.at + n - 1) % n; this.reveal("pp-projects", this.scroll, this.at); }
+      if (k === "down" && n) { this.at = (this.at + 1) % n; this.revealRow(); }
+      else if (k === "up" && n) { this.at = (this.at + n - 1) % n; this.revealRow(); }
       else if (k === "enter" && e.modifiers.shift) { this.handled = Date.now(); this.activate(true); }
       else if (k === "d" && mod) this.deleteSelected();
       else if (k === "w" && mod) this.openWorktrees();
       else if (k === "n" && mod) this.edit(blankProject(), null);
       else if (k === "l" && layoutMod) this.cycleLayout(this.selected()?.p ?? blankProject());
+      else if (k === "i" && layoutMod) this.toggleDetail();
       else if (k === "e" && mod) this.editSelected();
       else return;
     } else if (this.mode === "name" && k === "l" && layoutMod) this.cycleLayout(this.target);
@@ -512,15 +545,22 @@ export default class ProjectPresets extends View {
   }
 
   /** A scrolling list of 48px rows: wheel and scrollbar work, and `reveal` keeps the highlight in view. */
-  vlist(id, rows, render, handle, max, keyOf, onClick) {
-    const height = Math.min(max, rows.length * ROW);
+  vlist(id, rows, render, handle, max, keyOf, onClick, sizes = null) {
+    const total = sizes ? sizes.reduce((a, b) => a + b, 0) : rows.length * ROW;
+    const height = Math.min(max, total);
     this.ranges[id] = { ...(this.ranges[id] ?? { start: 0, end: 0 }), visible: Math.max(1, Math.floor(height / ROW)) };
     return div().relative().flex_none().w_full().h(height).min_h(0)
-      .child(v_virtual_list(id, rows.length, ROW, (i) => keyOf(rows[i], i), (range) => {
+      .child(v_virtual_list(id, rows.length, sizes ?? ROW, (i) => keyOf(rows[i], i), (range) => {
         Object.assign(this.ranges[id], { start: range.start, end: range.end });
         return rows.slice(range.start, range.end).map((r, j) => render(r, range.start + j));
       }).track_scroll(handle).on_item_click(this.guard("row click", (key, cx) => onClick(key, cx))).size_full())
-      .when(rows.length * ROW > height, (el) => el.child(Scrollbar.vertical(id).viewport_from_layout().absolute().inset_0()));
+      .when(total > height, (el) => el.child(Scrollbar.vertical(id).viewport_from_layout().absolute().inset_0()));
+  }
+
+  /** Keeps the highlighted project in view (section headers count as list items). */
+  revealRow() {
+    const at = listItems(this.rows(), Boolean(this.query())).findIndex((it) => it.row && it.index === this.at);
+    if (at >= 0) this.reveal("pp-projects", this.scroll, at);
   }
 
   /** Scrolls only when row `at` is outside what is showing. */
@@ -544,45 +584,151 @@ export default class ProjectPresets extends View {
       .child(div().text_size(11).text_color(t.dim).child(hint));
   }
 
+  /** The project's avatar, drawn like herdr's sidebar draws a space's: a tile in the space's own color with the
+   *  initial. A project with no open space gets an outline in no color. */
+  avatar(t, p, space, size = 18) {
+    const tile = h_flex().size(size).flex_none().rounded(5).items_center().justify_center().text_size(size * 0.58).font_bold();
+    const initial = [...(p.name ?? "")][0]?.toUpperCase() ?? "?";
+    if (!space) return tile.border_1().border_color(t.input).text_color(t.dim).child(initial);
+    return tile.bg(spaceColor(shared("space.colors"), space.id, t)).text_color("#ffffff").child(initial);
+  }
+
+  /** A small outlined label. */
+  tag(t, text, color, border = color) {
+    return div().px(8).rounded(10).border_1().border_color(border).text_size(10.5).text_color(color).flex_none().child(text);
+  }
+
+  /** The selected project's mini picture of a layout's panes: the agent's pane lit when this is the one chosen. */
+  layoutThumb(t, layout, on, w = 72, h = 38) {
+    const box = div().relative().w(w).h(h).flex_none();
+    layoutRects(layout).forEach((r, i) => box.child(div().absolute().left(r.x * w + 1).top(r.y * h + 1).w(r.w * w - 2).h(r.h * h - 2).rounded(3).bg(i === 0 && on ? t.accent : on ? t.selected : t.input)));
+    return box;
+  }
+
+  /** Worktrees, Edit and Delete for the highlighted project: in the detail card, or under the list without it. */
+  actionButtons(t, cx) {
+    return h_flex().gap(8).items_center()
+      .child(this.button(t, "pp-wt", "Worktrees", false, () => { this.openWorktrees(); cx.notify(); }))
+      .child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); }))
+      .child(this.button(t, "pp-delete", this.pendingDelete ? "Delete?" : "Delete", false, () => { this.deleteSelected(); cx.notify(); }));
+  }
+
+  /** The detail card: what the highlighted project is, what Enter will do, and the layout choice. */
+  renderCard(t, r, cx) {
+    const card = v_flex().w(CARD).flex_none().gap(10).p(14).rounded(12).border_1().border_color(t.input).bg(t.raised);
+    if (!r) return card.child(div().text_color(t.dim).text_size(12).child("Nothing selected."));
+    const p = r.p;
+    const folder = projectFolder(p);
+    const info = this.info[folder];
+    const name = commandName(p.startup.agent);
+    const program = name && this.allAgents.find((a) => a.key === name || commandName((a.run ?? []).join(" ")) === name);
+    const kv = (k, v) => h_flex().gap(10).items_start().text_size(12)
+      .child(div().w(84).flex_none().text_color(t.dim).child(k))
+      .child(div().flex_1().min_w(0).text_color(t.foreground).child(v));
+    const current = this.layoutNameFor(p);
+    const choices = [{ name: "", label: "Agent only", panes: [{ type: "agent" }] }, ...this.layouts];
+    const [what, openLabel] = enterAction(p.worktree.mode);
+    const shown = choices.find((c) => c.name === current);
+    const dirtyText = info == null ? "…" : info.dirty ? `${info.dirty} file${info.dirty > 1 ? "s" : ""} modified` : "clean";
+    return card
+      .child(h_flex().gap(10).items_center().flex_wrap()
+        .child(this.avatar(t, p, r.space, 24))
+        .child(div().text_size(16).font_semibold().text_color(t.foreground).child(p.name))
+        .when(Boolean(r.space), (el) => el.child(this.tag(t, r.space.status === "working" ? "agent working" : "open", r.space.status === "working" ? t.working : t.done)))
+        .when(p.pinned, (el) => el.child(this.tag(t, "pinned", t.dim, t.input))))
+      .child(v_flex().gap(4)
+        .child(kv("Agent", h_flex().gap(6).items_center().child(this.agentIcon(t, p, 14)).child(div().child(program?.name ?? (name || "plain shell")))))
+        .when(Boolean(p.group), (el) => el.child(kv("Group", p.group)))
+        .child(kv("Branch", info?.branch ?? "…"))
+        .child(kv("Changes", info?.dirty ? div().text_color(t.working).child(dirtyText) : dirtyText))
+        .child(kv("Worktrees", info == null ? "…" : String(info.worktrees)))
+        .child(kv("Last opened", ago((shared(RECENT) ?? {})[p.path]))))
+      .child(v_flex().gap(6)
+        .child(h_flex().items_center().child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(`LAYOUT${this.layoutPick !== null ? " · PICKED" : ""}`))
+          .child(div().px(6).rounded(5).border_1().border_color(t.input).text_size(10.5).text_color(t.foreground).child(LAYOUT_HINT())))
+        .child(h_flex().gap(8).items_start().flex_wrap().children(choices.map((c, i) => {
+          const on = c.name === current;
+          const lit = on && this.layoutLit;
+          return v_flex().id(`pp-lay-${i}`).gap(4).p(6).rounded(9).border_1().cursor_pointer()
+            .border_color(on ? (lit ? t.accent : t.solid) : t.input).bg(on ? t.selected : t.background)
+            .on_click(this.guard("layout click", () => { this.layoutPick = c.name === (p.startup.layout ?? "") ? null : c.name; cx.notify(); }))
+            .child(this.layoutThumb(t, c, on))
+            .child(div().text_size(10.5).max_w(72).text_color(on ? t.foreground : t.dim).when(on, (el) => (lit ? el.font_bold() : el.font_semibold())).child(c.label ?? c.name))
+            .when(c.name === (p.startup.layout ?? ""), (el) => el.child(div().text_size(9.5).text_color(t.dim).child("project default")));
+        }))))
+      .child(div().text_size(12).text_color(t.dim).child(`Enter ${what}${shown && shown.name ? ` and opens ${(shown.label ?? shown.name).toLowerCase()}` : " and opens the agent alone"}.`))
+      .child(h_flex().gap(8).items_center()
+        .child(this.button(t, "pp-open", openLabel, true, () => { this.activate(false); cx.notify(); }))
+        .child(this.button(t, "pp-checkout", "Checkout", false, () => { this.activate(true); cx.notify(); })))
+      .child(this.actionButtons(t, cx));
+  }
+
+  /** Under the list: the hints and the layout choice, then the buttons. With the card its buttons are in the card, so
+   *  only Hide details and Add project share the hints' row; without it the hints get a row of their own. */
+  listFooter(t, cx, rows) {
+    const p = this.selected()?.p ?? blankProject();
+    const details = this.button(t, "pp-details", this.detail ? "Hide details" : "Show details", false, () => { this.toggleDetail(); cx.notify(); });
+    const add = this.button(t, "pp-add", "Add project", true, () => { this.edit(blankProject(), null); cx.notify(); });
+    if (this.detail) return h_flex().gap(12).items_center().child(div().flex_1().min_w(0).child(this.footer(t, p, true))).child(details).child(add);
+    return v_flex().gap(10)
+      .child(this.footer(t, p, true))
+      .child(h_flex().gap(8).items_center().justify_end()
+        .when(rows.length > 0, (el) => el.child(this.actionButtons(t, cx)))
+        .child(div().flex_1())
+        .child(details)
+        .child(add));
+  }
+
   renderList(t, cx) {
     const rows = this.rows();
     if (this.at >= rows.length) this.at = Math.max(0, rows.length - 1);
     const projectKey = (r) => `${r.p.name}\u0000${r.p.path}`;
+    const items = listItems(rows, Boolean(this.query()));
+    const stripe = (r) => (r.space ? (t[r.space.status] ?? t.done) : null);
     const row = (r, i) => {
       const on = i === this.at;
-      const mode = r.p.worktree.mode;
-      return h_flex().id(`pp-${i}`).w_full().h(48).flex_none().overflow_hidden().px(12).gap(10).items_center().rounded(8).cursor_pointer()
+      const info = this.info[projectFolder(r.p)];
+      return h_flex().id(`pp-${i}`).relative().w_full().h(ROW).flex_none().overflow_hidden().pl(14).pr(12).gap(10).items_center().rounded(8).cursor_pointer()
         .when(on, (el) => el.bg(t.selected))
-        .child(div().w(10).flex_none().text_color(r.space ? (t[r.space.status] ?? t.done) : t.dim).child(r.space ? "●" : r.p.pinned ? "★" : "·"))
+        .when(Boolean(r.space), (el) => el.child(div().absolute().left(0).top(9).w(3).h(ROW - 18).rounded(2).bg(stripe(r))
+          .when(r.space.status === "working", (e) => e.loop("opacity", { from: 1, to: 0.35, period: 1000 }))))
+        .child(this.avatar(t, r.p, r.space))
         .child(this.agentIcon(t, r.p))
         .child(v_flex().flex_1().min_w(0)
           .child(this.nameText(t, r.p.name))
           .child(div().text_size(11).text_color(t.dim).truncate().child(shortHome(projectFolder(r.p), home()))))
         .when(Boolean(r.p.group), (el) => el.child(div().text_size(11).text_color(t.dim).child(r.p.group)))
-        .child(div().text_size(11).text_color(t.dim).child(mode === "never" ? "checkout" : mode === "ask" ? "worktree?" : "worktree"));
+        .when(Boolean(info), (el) => el.child(h_flex().gap(5).flex_none()
+          .child(this.tag(t, info.branch, t.dim, t.input))
+          .when(info.dirty > 0, (e) => e.child(this.tag(t, `${info.dirty} changed`, t.working)))
+          .when(info.worktrees > 0, (e) => e.child(this.tag(t, `${info.worktrees} wt`, t.accent)))));
     };
+    const item = (it, i) => it.header
+      ? div().w_full().h(HEADER).flex_none().px(14).pb(3).flex().items_end().text_size(10.5).font_semibold().text_color(t.dim).child(it.header.toUpperCase())
+      : row(it.row, it.index);
+    const list = this.vlist("pp-projects", items, item, this.scroll, this.detail ? 420 : 330, // shorter without the card: its footer is three rows tall
+       (it) => (it.header ? `header:${it.header}` : projectKey(it.row)), (key, cx) => {
+      const i = rows.findIndex((r) => projectKey(r) === key);
+      if (i < 0) return;
+      const double = this.lastClick?.key === key && Date.now() - this.lastClick.at < 450;
+      this.lastClick = { key, at: Date.now() };
+      log("debug", "click row", { i, double });
+      this.at = i;
+      if (double) this.activate(false); else cx.notify();
+    }, items.map((it) => (it.header ? HEADER : ROW)));
     return v_flex().gap(10).min_h(0)
       .child(this.title(t, "Projects", "Esc"))
       .child(h_flex().h(36).flex_none().px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
-        .child(Input.new(this.search).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
+        .child(Input.new(this.search).flex_1().h_full().text_size(12.8).text_color(t.foreground))
+        .child(div().text_size(11).text_color(t.dim).child(`${rows.length} of ${this.projects.length}`)))
       .child(this.error ? div().text_size(12).text_color(t.blocked).child(this.error) : div())
-      .child(this.vlist("pp-projects", rows, row, this.scroll, 380, projectKey, (key, cx) => {
-        const i = rows.findIndex((r) => projectKey(r) === key);
-        if (i < 0) return;
-        const double = this.lastClick?.key === key && Date.now() - this.lastClick.at < 450;
-        this.lastClick = { key, at: Date.now() };
-        log("debug", "click row", { i, double });
-        this.at = i;
-        if (double) this.activate(false); else cx.notify();
-      }))
-      .when(!rows.length, (el) => el.child(div().py(14).text_color(t.dim).child(this.projects.length ? "No project matches." : "No projects yet. Click Add project below a git checkout.")))
+      .child(h_flex().gap(14).items_start().min_h(0)
+        .child(v_flex().flex_1().min_w(0).gap(6)
+          .child(list)
+          .when(!rows.length, (el) => el.child(div().py(14).text_color(t.dim).child(this.projects.length ? "No project matches." : "No projects yet. Click Add project below a git checkout."))))
+        .when(this.detail, (el) => el.child(this.renderCard(t, this.selected(), cx))))
       .when(Boolean(this.pendingDelete), (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove "${this.pendingDelete.name}" from the list? Press ${key("d")} again or click Delete. The folder and its worktrees stay.`)))
-      .child(this.footer(t, this.selected()?.p ?? blankProject(), true))
-      .child(h_flex().gap(8).items_center().justify_end()
-        .when(rows.length > 0, (el) => el.child(this.button(t, "pp-wt", "Worktrees", false, () => { this.openWorktrees(); cx.notify(); }))
-          .child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); }))
-          .child(this.button(t, "pp-delete", this.pendingDelete ? "Delete?" : "Delete", false, () => { this.deleteSelected(); cx.notify(); })))
-        .child(this.button(t, "pp-add", "Add project", true, () => { this.edit(blankProject(), null); cx.notify(); })));
+      .child(this.listFooter(t, cx, rows));
   }
 
   renderWorktrees(t, cx) {
