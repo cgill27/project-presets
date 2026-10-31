@@ -26,7 +26,7 @@ async function open(projects, layouts, opts = { detail: true }) {
   reset();
   if ("detail" in opts) setShared("project-presets.detail", opts.detail);
   mkdirSync(`${state.appHome}/data`, { recursive: true });
-  writeFileSync(dataFile(), JSON.stringify({ ...(layouts ? { layouts } : {}), ...(opts.gitInfo ? { gitInfo: true } : {}), projects }, null, 2));
+  writeFileSync(dataFile(), JSON.stringify({ ...(layouts ? { layouts } : {}), ...("gitInfo" in opts ? { gitInfo: opts.gitInfo } : {}), projects }, null, 2));
   const pending = [];
   const cx = {
     timers: [],
@@ -867,22 +867,21 @@ test("git answers cause one batched redraw, not one per project", async () => {
   assert.equal(v.bumpPending, false);
 });
 
-test("the detail card is off until asked for", async () => {
+test("the detail card is on by default, ctrl+alt+I turns it off, and the choice is kept", async () => {
   const { v, cx } = await open([proj("demo", "/r/demo")], undefined, {});
-  assert.equal(v.detail, false);
-  const t = texts(v);
-  assert.ok(!t.includes("Last opened") && !t.includes("LAYOUT"), "no card");
-  assert.ok(t.includes("Show details") && hasId(v, "pp-wt") && hasId(v, "pp-edit") && hasId(v, "pp-delete"), "the buttons and the layout choice are under the list");
-  press(v, cx, "i", CTRL_ALT);
   assert.equal(v.detail, true);
   assert.ok(texts(v).includes("Last opened"));
+  press(v, cx, "i", CTRL_ALT);
+  assert.equal(v.detail, false);
+  const t = texts(v);
+  assert.ok(!t.includes("Last opened") && t.includes("Show details") && hasId(v, "pp-wt"), "the buttons and the layout choice move under the list");
 });
 
 // ---------------------------------------------------------------- git details are opt-in
 
-test("by default no git is run for the list, and the card has no git rows", async () => {
+test("with gitInfo: false no git is run for the list, and the card has no git rows", async () => {
   const dir = makeRepo();
-  const { v, cx } = await open([proj("demo", dir)], undefined, { detail: true });
+  const { v, cx } = await open([proj("demo", dir)], undefined, { detail: true, gitInfo: false });
   await cx.settle();
   assert.equal(v.gitInfo, false);
   assert.deepEqual(v.info, {}, "nothing was gathered");
@@ -891,10 +890,10 @@ test("by default no git is run for the list, and the card has no git rows", asyn
   assert.ok(!t.includes("changed") && !/\bwt\b/.test(t), "no chips");
 });
 
-test("with gitInfo: true in the data file the details are gathered after the list shows", async () => {
+test("by default the git details are gathered after the list shows", async () => {
   const dir = makeRepo();
   writeFileSync(join(dir, "a.txt"), "x\n");
-  const { v, cx } = await open([proj("demo", dir)], undefined, { detail: true, gitInfo: true });
+  const { v, cx } = await open([proj("demo", dir)], undefined, { detail: true });
   for (let i = 0; i < 30 && !v.info[dir]; i++) { await cx.settle(); await new Promise((r) => setTimeout(r, 20)); }
   assert.equal(v.gitInfo, true);
   assert.deepEqual(v.info[dir], { branch: "main", dirty: 1, worktrees: 0 });

@@ -9,7 +9,7 @@ const file = `${state.appHome}/data/project-presets.json`;
 
 test("a missing file is an empty list", async () => {
   reset();
-  assert.deepEqual(await loadConfig(), { projects: [], layouts: [], gitInfo: false, raw: null });
+  assert.deepEqual(await loadConfig(), { projects: [], layouts: [], gitInfo: true, raw: null });
 });
 
 test("save then load round-trips and fills defaults", async () => {
@@ -58,14 +58,14 @@ test("a missing or malformed layouts key is an empty list", async () => {
   assert.deepEqual((await loadConfig()).layouts, []);
 });
 
-test("git details are off unless the data file says gitInfo: true", async () => {
+test("git details are on unless the data file says gitInfo: false", async () => {
   writeFileSync(file, JSON.stringify({ projects: [] }));
-  assert.equal((await loadConfig()).gitInfo, false);
-  writeFileSync(file, JSON.stringify({ projects: [], gitInfo: "yes" }));
-  assert.equal((await loadConfig()).gitInfo, false, "only the value true counts");
-  writeFileSync(file, JSON.stringify({ projects: [], gitInfo: true }));
   assert.equal((await loadConfig()).gitInfo, true);
+  writeFileSync(file, JSON.stringify({ projects: [], gitInfo: 0 }));
+  assert.equal((await loadConfig()).gitInfo, true, "only the value false turns them off");
+  writeFileSync(file, JSON.stringify({ projects: [], gitInfo: false }));
+  assert.equal((await loadConfig()).gitInfo, false);
   const { raw, projects } = await loadConfig();
   await saveConfig(projects, raw);
-  assert.equal(JSON.parse(readFileSync(file, "utf8")).gitInfo, true, "saving keeps it");
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).gitInfo, false, "saving keeps it");
 });

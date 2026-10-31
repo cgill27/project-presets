@@ -68,8 +68,8 @@ export default class ProjectPresets extends View {
     this.layouts = [];
     this.refreshSnap();
     cx.timer.every(3000, (cx) => { if (this.refreshSnap()) cx.notify(); });
-    this.detail = shared(DETAIL) === true; // the detail card beside the list: off until asked for (ctrl+alt+I), it makes the popup slow
-    this.gitInfo = false;
+    this.detail = shared(DETAIL) !== false; // the detail card beside the list (ctrl+alt+I turns it off)
+    this.gitInfo = true;
     this.info = {}; // folder → { branch, dirty, worktrees } (null: not readable), filled in after the list shows
     this.layoutPick = null; // null: each project's own layout; "": none; else a layout name (set only when it differs from the project's own)
     this.raw = null;
@@ -124,8 +124,8 @@ export default class ProjectPresets extends View {
       }
       if (after) await after();
       cx.notify();
-      // Branch, changed files and worktrees per project: off unless "gitInfo": true is in the data file. It runs git in
-      // every project each time the picker opens, and the picker is slow enough already.
+      // Branch, changed files and worktrees per project: on unless "gitInfo": false is in the data file (it runs git in every
+      // project each time the picker opens).
       if (this.gitInfo) this.loadInfo(cx);
     });
   }
@@ -680,38 +680,44 @@ export default class ProjectPresets extends View {
     const card = v_flex().w(CARD).flex_none().gap(10).p(14).rounded(12).border_1().border_color(t.input).bg(t.raised);
     if (!r) return card.child(div().text_color(t.dim).text_size(12).child("Nothing selected."));
     const p = r.p;
-    const info = this.info[projectFolder(p)];
+    const folder = projectFolder(p);
+    const info = this.info[folder];
     const name = commandName(p.startup.agent);
     const program = name && this.allAgents.find((a) => a.key === name || commandName((a.run ?? []).join(" ")) === name);
-    // Each element a render builds costs time, and herdr cuts a slow render off: a row is a label and a plain string.
-    const kv = (k, v) => h_flex().gap(10).text_size(12).text_color(t.foreground).child(div().w(84).text_color(t.dim).child(k)).child(v);
+    const kv = (k, v) => h_flex().gap(10).items_start().text_size(12)
+      .child(div().w(84).flex_none().text_color(t.dim).child(k))
+      .child(div().flex_1().min_w(0).text_color(t.foreground).child(v));
     const current = this.layoutNameFor(p);
     const choices = [{ name: "", label: "Agent only", panes: [{ type: "agent" }] }, ...this.layouts];
     const [what, openLabel] = enterAction(p.worktree.mode);
     const shown = choices.find((c) => c.name === current);
-    const dirty = info == null ? "…" : info.dirty ? `${info.dirty} file${info.dirty > 1 ? "s" : ""} modified` : "clean";
+    const dirtyText = info == null ? "…" : info.dirty ? `${info.dirty} file${info.dirty > 1 ? "s" : ""} modified` : "clean";
     return card
-      .child(h_flex().gap(10).items_center()
+      .child(h_flex().gap(10).items_center().flex_wrap()
         .child(this.avatar(t, p, r.space, 24))
         .child(div().text_size(16).font_semibold().text_color(t.foreground).child(p.name))
-        .when(Boolean(r.space), (el) => el.child(this.tag(t, r.space.status === "working" ? "agent working" : "open", r.space.status === "working" ? t.working : t.done))))
-      .child(v_flex().gap(3)
-        .child(kv("Agent", program?.name ?? (name || "plain shell")))
-        .when(this.gitInfo, (el) => el.child(kv("Branch", info?.branch ?? "…")).child(kv("Changes", dirty)).child(kv("Worktrees", info == null ? "…" : String(info.worktrees))))
+        .when(Boolean(r.space), (el) => el.child(this.tag(t, r.space.status === "working" ? "agent working" : "open", r.space.status === "working" ? t.working : t.done)))
+        .when(p.pinned, (el) => el.child(this.tag(t, "pinned", t.dim, t.input))))
+      .child(v_flex().gap(4)
+        .child(kv("Agent", h_flex().gap(6).items_center().child(this.agentIcon(t, p, 14)).child(div().child(program?.name ?? (name || "plain shell")))))
+        .when(Boolean(p.group), (el) => el.child(kv("Group", p.group)))
+        .when(this.gitInfo, (el) => el.child(kv("Branch", info?.branch ?? "…")).child(kv("Changes", info?.dirty ? div().text_color(t.working).child(dirtyText) : dirtyText)).child(kv("Worktrees", info == null ? "…" : String(info.worktrees))))
         .child(kv("Last opened", ago(this.snap.recent[p.path]))))
-      .child(h_flex().items_center().child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(`LAYOUT${this.layoutPick !== null ? " · PICKED" : ""}`))
-        .child(div().text_size(10.5).text_color(t.dim).child(LAYOUT_HINT())))
-      .child(h_flex().gap(8).items_start().children(choices.map((c, i) => {
-        const on = c.name === current;
-        const lit = on && this.layoutLit;
-        return v_flex().id(`pp-lay-${i}`).gap(4).p(6).rounded(9).border_1().cursor_pointer()
-          .border_color(on ? (lit ? t.accent : t.solid) : t.input).bg(on ? t.selected : t.background)
-          .on_click(this.guard("layout click", () => { this.layoutPick = c.name === (p.startup.layout ?? "") ? null : c.name; cx.notify(); }))
-          .child(this.layoutThumb(t, c, on))
-          .child(div().text_size(10.5).max_w(72).text_color(on ? t.foreground : t.dim).child(c.label ?? c.name));
-      })))
+      .child(v_flex().gap(6)
+        .child(h_flex().items_center().child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(`LAYOUT${this.layoutPick !== null ? " · PICKED" : ""}`))
+          .child(div().px(6).rounded(5).border_1().border_color(t.input).text_size(10.5).text_color(t.foreground).child(LAYOUT_HINT())))
+        .child(h_flex().gap(8).items_start().flex_wrap().children(choices.map((c, i) => {
+          const on = c.name === current;
+          const lit = on && this.layoutLit;
+          return v_flex().id(`pp-lay-${i}`).gap(4).p(6).rounded(9).border_1().cursor_pointer()
+            .border_color(on ? (lit ? t.accent : t.solid) : t.input).bg(on ? t.selected : t.background)
+            .on_click(this.guard("layout click", () => { this.layoutPick = c.name === (p.startup.layout ?? "") ? null : c.name; cx.notify(); }))
+            .child(this.layoutThumb(t, c, on))
+            .child(div().text_size(10.5).max_w(72).text_color(on ? t.foreground : t.dim).when(on, (el) => (lit ? el.font_bold() : el.font_semibold())).child(c.label ?? c.name))
+            .when(c.name === (p.startup.layout ?? ""), (el) => el.child(div().text_size(9.5).text_color(t.dim).child("project default")));
+        }))))
       .child(div().text_size(12).text_color(t.dim).child(`Enter ${what}${shown && shown.name ? ` and opens ${(shown.label ?? shown.name).toLowerCase()}` : " and opens the agent alone"}.`))
-      .child(h_flex().gap(8)
+      .child(h_flex().gap(8).items_center()
         .child(this.button(t, "pp-open", openLabel, true, () => { this.activate(false); cx.notify(); }))
         .child(this.button(t, "pp-checkout", "Checkout", false, () => { this.activate(true); cx.notify(); })))
       .child(this.actionButtons(t, cx));
