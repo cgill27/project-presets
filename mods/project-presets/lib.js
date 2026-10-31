@@ -47,24 +47,19 @@ export function expandHome(p, home) {
   return String(p ?? "").replace(/^[\r\n]+|[\r\n]+$/g, "").replace(/^(~|\$HOME)(?=\/|$)/, home).replace(/[\\/]+$/, "");
 }
 
-const ESCAPES = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, "\\": 92, '"': 34 };
-
-/** A path as git prints it: when it has special characters git wraps it in quotes and escapes them
- *  (\n, \", \\ and \ooo octal bytes). Anything unquoted comes back unchanged. */
-export function unquotePath(p) {
-  if (p.length < 2 || p[0] !== '"' || p[p.length - 1] !== '"') return p;
-  const bytes = [];
-  const enc = new TextEncoder();
-  const body = p.slice(1, -1);
-  for (let i = 0; i < body.length; i++) {
-    const c = body[i];
-    if (c !== "\\") { bytes.push(...enc.encode(c)); continue; }
-    const oct = body.slice(i + 1, i + 4);
-    if (/^[0-7]{3}$/.test(oct)) { bytes.push(parseInt(oct, 8)); i += 3; }
-    else if (body[i + 1] in ESCAPES) { bytes.push(ESCAPES[body[i + 1]]); i++; }
-    else bytes.push(92);
-  }
-  return new TextDecoder().decode(Uint8Array.from(bytes));
+/** `git worktree list --porcelain -z` (or without -z) to [{ path, branch, locked, prunable }], the
+ *  main checkout first. With -z, records end in NUL and a blank field separates worktrees, so a
+ *  path may hold anything; without it git prints a path with a newline raw and it can't be told apart. */
+export function parseWorktrees(text) {
+  const nul = text.includes("\0");
+  const blocks = nul ? text.split("\0\0") : text.trim().split(/\n\n+/);
+  return blocks.filter((b) => b.trim() !== "").map((b) => {
+    const lines = nul ? b.split("\0") : b.split("\n");
+    const get = (key) => lines.find((x) => x === key || x.startsWith(key + " "));
+    const path = get("worktree")?.slice(9) ?? "";
+    const branch = get("branch")?.match(/^branch refs\/heads\/(.+)$/)?.[1] ?? null;
+    return { path, branch, locked: Boolean(get("locked")), prunable: Boolean(get("prunable")) };
+  });
 }
 
 export function shortHome(p, home) {

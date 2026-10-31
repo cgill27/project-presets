@@ -46,12 +46,12 @@ Use a throwaway git repo as your test project so you don't create worktrees in r
 3. Run the checks:
 
    ```sh
-   node --test test/                    # pure helpers in lib.js
+   node --test test/                    # helpers, git, config and log, with no UI
    herdr-app check mods/project-presets # loads and renders the mod once
    ```
 
    Both must pass. `herdr-app check` doesn't run click handlers or later states, so also try your change in the running app. With debug logging on, the log shows every key, click and git command.
-4. Add a test in `test/` when you change `lib.js`. Logic that needs `herdr` (`git.js`, `main.js`) can't run under plain node, so describe how you tried it in the pull request.
+4. Add a test in `test/` when you change `lib.js`, `git.js`, `config.js` or `log.js`. Tests for the files that import `herdr` load a stand-in for it from `test/helpers/` and run against real throwaway git repos. `main.js` is the UI and isn't covered, so describe how you tried a change to it in the pull request.
 5. If behaviour changes, update `RECIPE.md` (and `README.md` if it is user-facing), including the "Done when" checks.
 
 ## Screenshots

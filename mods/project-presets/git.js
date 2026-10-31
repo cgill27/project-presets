@@ -1,7 +1,7 @@
 // Everything that touches git or starts a space. `log(msg)` reports progress to the picker.
 import { exec as rawExec, hc, run, focused, spaces, home } from "herdr";
 import { log } from "./log.js";
-import { splitArgs, slug, branchName, expandHome, expand, basename, dateStamp, timeStamp, unquotePath } from "./lib.js";
+import { splitArgs, slug, branchName, expandHome, expand, basename, dateStamp, timeStamp, parseWorktrees } from "./lib.js";
 
 /** exec, logged in debug mode: command, folder, exit code and the first line of stderr. */
 async function exec(command, args = [], options = {}) {
@@ -224,20 +224,20 @@ async function sendWhenReady(terminal, folder, text) {
  *  merged: the branch is already in <remote>/<base>, so removing it loses nothing. */
 export async function listWorktrees(project) {
   const folder = projectFolder(project);
-  const r = await git(folder, ["worktree", "list", "--porcelain"]);
+  // -z (git 2.36+) keeps odd folder names intact; older gits fall back to plain porcelain.
+  let r = await git(folder, ["worktree", "list", "--porcelain", "-z"]);
+  if (r.code !== 0) r = await git(folder, ["worktree", "list", "--porcelain"]);
   if (r.code !== 0) throw new Error(out({ stdout: r.stderr }) || "git worktree list failed");
-  const blocks = r.stdout.trim().split(/\n\n+/).slice(1);
+  const found = parseWorktrees(r.stdout).slice(1);
   let base = null;
   try { base = await baseRef(folder, project.git); } catch {}
   const open = spaces().filter((s) => !s.machine);
   const list = [];
-  for (const b of blocks) {
-    const path = unquotePath((b.match(/^worktree (.+)$/m) ?? [])[1] ?? "");
-    const branch = ((b.match(/^branch refs\/heads\/(.+)$/m) ?? [])[1]) ?? null;
-    if (!path || /^prunable/m.test(b)) continue;
+  for (const { path, branch, locked, prunable } of found) {
+    if (!path || prunable) continue;
     const dirty = out(await git(path, ["status", "--porcelain"])) !== "";
     const merged = Boolean(base && branch && (await git(folder, ["merge-base", "--is-ancestor", branch, base])).code === 0);
-    list.push({ path, branch, dirty, merged, locked: /^locked/m.test(b), space: open.find((s) => s.folder === path) ?? null });
+    list.push({ path, branch, dirty, merged, locked, space: open.find((s) => s.folder === path) ?? null });
   }
   return list;
 }

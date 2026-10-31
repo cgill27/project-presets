@@ -126,7 +126,7 @@ To start a fresh log before reproducing, empty it with `: > ~/.config/herdr-app/
 
 ## Development
 
-`node --test test/` runs the pure-helper tests; `herdr-app check mods/project-presets` checks the mod. The `.d.ts` files in the mod folder are copied from `~/.config/herdr-app/` and not committed.
+`node --test test/` runs the tests (helpers, git, config and log, against real temporary git repos and a stand-in for `herdr`; the UI in `main.js` isn't covered); `herdr-app check mods/project-presets` checks the mod. The `.d.ts` files in the mod folder are copied from `~/.config/herdr-app/` and not committed.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute.
 
