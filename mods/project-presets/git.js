@@ -1,7 +1,7 @@
 // Everything that touches git or starts a space. `log(msg)` reports progress to the picker.
 import { exec as rawExec, hc, run, focused, spaces, home } from "herdr";
 import { log } from "./log.js";
-import { splitArgs, slug, branchName, expandHome, expand, basename, dateStamp, timeStamp, parseWorktrees } from "./lib.js";
+import { splitArgs, slug, branchName, expandHome, expand, basename, dateStamp, timeStamp, parseWorktrees, layoutPlan, inFolder } from "./lib.js";
 
 /** exec, logged in debug mode: command, folder, exit code and the first line of stderr. */
 async function exec(command, args = [], options = {}) {
@@ -162,7 +162,41 @@ const exclusive = (fn) => {
   return result;
 };
 
-export async function launch(project, folder, name) {
+/** The space space.new just made: not in `before`, with this name (and folder, when several), and its first pane. */
+async function findNewSpace(before, name, folder) {
+  for (let i = 0; i < 20; i++) {
+    try {
+      const r = await exec("herdr-app", ["ls"]);
+      const fresh = (JSON.parse(r.stdout || "{}").spaces ?? []).filter((s) => !before.has(s.id) && s.name === name);
+      const found = fresh.filter((s) => s.folder === folder).pop() ?? fresh.pop();
+      const pane = found?.tabs?.[0]?.terminals?.[0]?.pane;
+      if (found && pane) return { space: found.id, pane };
+    } catch {}
+    await sleep(0.25);
+  }
+  return null;
+}
+
+/** Splits the new space's first pane into the layout's panes. A failed split is logged and ends the layout;
+ *  the space and its agent are already open. Focus goes back to the agent. */
+async function buildLayout(layout, folder, root) {
+  const plan = layoutPlan(layout);
+  const ids = { [layout.panes[0]?.name ?? "agent"]: root };
+  for (const pane of plan) {
+    const argv = pane.type === "command" ? ["sh", "-c", pane.command] : [];
+    const r = await exec("herdr-app", ["do", "pane.split", JSON.stringify({ direction: pane.direction, pane: ids[pane.from], argv: inFolder(folder, argv) })]);
+    let made = {};
+    try { made = JSON.parse(r.stdout || "{}"); } catch {}
+    if (r.code !== 0 || made.error || !made.pane) {
+      log("error", `layout "${layout.name}": couldn't split for ${pane.name}`, { code: r.code, error: made.error ?? r.stderr.split("\n")[0] });
+      break;
+    }
+    ids[pane.name] = made.pane;
+  }
+  run("pane.focus", { pane: root });
+}
+
+export async function launch(project, folder, name, layout = null) {
   const { agent, args, prompt, promptMode, tabs } = project.startup;
   const argv = agent.trim() ? [...splitArgs(agent), ...splitArgs(args)] : [];
   // "arg": herdr appends the prompt to the command line (claude and most agents take that).
@@ -170,6 +204,7 @@ export async function launch(project, folder, name) {
   // that read a positional argument as a subcommand).
   const send = argv.length && prompt && promptMode === "send";
   const terminal = await exclusive(async () => {
+    const spacesBefore = new Set(spaces().map((s) => s.id));
     const known = send ? new Set((await liveTerminals()).map((t) => t.address)) : null;
     // Herdr nests a worktree's space under its repo's own space, but only while that one is open.
     const main = projectFolder(project);
@@ -179,9 +214,18 @@ export async function launch(project, folder, name) {
     }
     log("debug", "launch", { folder, name, argv, promptMode, tabs });
     run("space.new", { name, folder, ...(argv.length ? { argv, ...(prompt && !send ? { task: prompt } : {}) } : {}) });
-    const space = focused()?.space;
+    // focused() can still be the window the picker was opened from just after space.new, so the new
+    // space and its first pane come from `herdr-app ls`: the space that wasn't there before.
+    const here = layout || tabs.length ? await findNewSpace(spacesBefore, name, folder) : null;
+    const space = here?.space ?? focused()?.space;
+    // Found before the layout's split panes exist, which also start in this folder.
+    const terminal = send ? await findNewTerminal(known, folder) : null;
+    if (layout) {
+      if (!here) log("error", `layout "${layout.name}" skipped: couldn't find the new space`, { name });
+      else try { await buildLayout(layout, folder, here.pane); } catch (e) { log("error", `layout "${layout.name}": ${e.message}`); }
+    }
     for (const cmd of tabs) run("tab.new", { space, name: cmd.split(/\s+/)[0], folder, argv: ["sh", "-c", cmd] });
-    return send ? await findNewTerminal(known, folder) : null;
+    return terminal;
   });
   if (send) await sendWhenReady(terminal, folder, prompt);
 }

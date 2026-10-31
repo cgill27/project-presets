@@ -21,10 +21,12 @@ export const state = {
   nextId: 1,
   sendFails: false,
   hangNextLs: false, // the next `hc ls` never answers
+  splits: [],           // every `herdr-app do pane.split`
+  splitFails: false,
 };
 
 export function reset() {
-  Object.assign(state, { spaces: [], focused: null, terminals: [], foreground: "claude", runs: [], sent: [], agentStatus: "idle", nextId: 1, sendFails: false, hangNextLs: false });
+  Object.assign(state, { spaces: [], focused: null, terminals: [], foreground: "claude", runs: [], sent: [], agentStatus: "idle", nextId: 1, sendFails: false, hangNextLs: false, splits: [], splitFails: false, closed: 0, platform: "linux", picked: null });
 }
 
 export const home = () => state.home;
@@ -33,6 +35,20 @@ export const spaces = () => state.spaces;
 export const focused = () => state.focused;
 
 export function exec(command, args = [], options = {}) {
+  // The real herdr-app would split the person's window: answer like it, and record the request.
+  if (command === "herdr-app") {
+    if (args[0] === "ls") {
+      const spaces = state.spaces.map((s) => ({ ...s, tabs: [{ id: `tb-${s.id}`, terminals: [{ terminal: `t-${s.id}`, pane: `pane-of-${s.id}` }] }] }));
+      return Promise.resolve({ code: 0, stdout: JSON.stringify({ spaces }), stderr: "" });
+    }
+    const [, name, json] = args;
+    const a = JSON.parse(json ?? "{}");
+    if (state.splitFails) return Promise.resolve({ code: 1, stdout: JSON.stringify({ error: "no such pane" }), stderr: "" });
+    state.splits.push({ command: name, ...a });
+    const id = `pane-${state.splits.length}`;
+    state.terminals.push({ address: `t${state.nextId++}`, cwd: a.argv?.[4], state: "live", status: null, argv: a.argv });
+    return Promise.resolve({ code: 0, stdout: JSON.stringify({ pane: id, terminal: `t-${id}` }), stderr: "" });
+  }
   return new Promise((resolve, reject) => {
     execFile(command, args, { cwd: options.cwd, encoding: "utf8", maxBuffer: 8 << 20 }, (err, stdout, stderr) => {
       if (err && typeof err.code !== "number") return reject(err);
@@ -47,7 +63,8 @@ export function run(command, args = {}) {
   if (command === "space.new") {
     const id = `sp${state.nextId++}`;
     state.spaces.push({ id, name: args.name, folder: args.folder, machine: null });
-    state.focused = { space: id };
+    // herdr moves focus to the new space only later: right after space.new focused() is still the old window
+    state.focused ??= { space: "picker-space", pane: "picker-pane" };
     state.terminals.push({ address: `t${state.nextId++}`, cwd: args.folder, state: "live", status: state.agentStatus, agent: args.argv?.[0] ?? null, argv: args.argv ?? [] });
   } else if (command === "space.close") {
     state.spaces = state.spaces.filter((s) => s.id !== args.id);
@@ -66,7 +83,7 @@ export async function hc(args) {
 function hcNow(args) {
   const [cmd, ...rest] = args;
   const ok = (stdout = "") => ({ code: 0, stdout, stderr: "" });
-  if (cmd === "ls") return ok(JSON.stringify({ terminals: state.terminals }));
+  if (cmd === "ls") return ok(JSON.stringify({ terminals: [...state.terminals].reverse() })); // newest first: the worst case for picking "the new one"
   if (cmd === "get") {
     const t = state.terminals.find((x) => x.address === rest[0]);
     return t ? ok(JSON.stringify({ ...t, foreground: { name: state.foreground } })) : { code: 3, stdout: "", stderr: "not_found\n" };
@@ -89,3 +106,16 @@ export async function writeTextFile(path, text, expected) {
   writeFileSync(path, text);
   return null;
 }
+
+// ---- what the picker's view needs ----
+const store = {};
+state.known = [{ key: "claude", name: "Claude Code", run: ["claude"], icon: "icons/claude.svg", tint: false, installed: true }];
+state.closed = 0;
+export const knownAgents = async () => state.known;
+export const window = () => ({ platform: state.platform ?? "linux" });
+export const theme = () => new Proxy({}, { get: (_t, k) => `#${String(k)}` });
+export const props = () => ({ overlay: "ov1" });
+export const closeOverlay = () => { state.closed++; };
+export const pickFolder = async () => state.picked ?? null;
+export const shared = (k) => store[k];
+export const setShared = (k, v) => { store[k] = v; };

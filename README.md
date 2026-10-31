@@ -36,6 +36,31 @@ When it finishes you land in a new space on the new worktree, with the agent alr
 
 ![The result: a new space on cgill27/2026-10-30-add-search-page with Claude Code running and the first prompt answered](docs/screenshots/15-result.png)
 
+### Pane layouts
+
+A project can open its space with more than the agent: a terminal below it, a file manager beside it, a log tail. Name a layout in the project's **Startup → Pane layout** field, or press **ctrl+alt+L** (**⌘⌥L** on macOS) in the list or the branch-name step to pick one for this launch: it steps through none (the agent alone) and then every layout. A selector under the projects shows them all with the one this launch will use lit, and it briefly turns bold with an accent ring after each change.
+
+Two layouts ship: `agent-terminal` (a shell below the agent) and `agent-side-terminal` (a shell to its right). Add your own, or replace one of those, with a `layouts` list in `~/.config/herdr-app/data/project-presets.json`, next to `projects`:
+
+```json
+{
+  "layouts": [
+    {
+      "name": "coding",
+      "label": "Agent, files and a terminal",
+      "panes": [
+        { "type": "agent" },
+        { "name": "files", "type": "command", "command": "yazi .", "direction": "right" },
+        { "name": "term", "type": "shell", "direction": "down", "from": "agent" }
+      ]
+    }
+  ],
+  "projects": []
+}
+```
+
+The first pane is always the agent. Every other pane needs a `direction` (`right` or `down`) and splits the previous pane, or the pane named in `from`. `type` is `shell` (your shell), `command` (runs `command`) or `agent`. All panes start in the project's folder, or the new worktree. Herdr splits evenly; sizes can't be set. A bad layout is reported before anything is created, and if a split fails the space still opens with the panes made so far. Saving a project from the editor keeps your `layouts`.
+
 ### Keeping the sidebar tidy
 
 Herdr nests a worktree's space under its repository's own space, but only while the repo's space is open. Two settings in a project's **Worktree** section control how that looks:
@@ -126,7 +151,7 @@ To start a fresh log before reproducing, empty it with `: > ~/.config/herdr-app/
 
 ## Development
 
-`node --test test/` runs the tests (helpers, git, config and log, against real temporary git repos and a stand-in for `herdr`; the UI in `main.js` isn't covered); `herdr-app check mods/project-presets` checks the mod. The `.d.ts` files in the mod folder are copied from `~/.config/herdr-app/` and not committed.
+`node --test test/` runs the tests (helpers, git, config, log and the picker's view, against real temporary git repos and stand-ins for `herdr` and gpui; how things look still needs a check by eye); `herdr-app check mods/project-presets` checks the mod. The `.d.ts` files in the mod folder are copied from `~/.config/herdr-app/` and not committed.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute.
 

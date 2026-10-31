@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fuzzy, slug, expand, branchName, expandHome, splitList, normalize, splitArgs, basename, parseWorktrees, dateStamp, timeStamp, shortHome, joinList, blankProject } from "../mods/project-presets/lib.js";
+import { fuzzy, slug, expand, branchName, expandHome, splitList, normalize, splitArgs, basename, parseWorktrees, fuzzyPositions, highlightRuns, commandName, agentOptions, allLayouts, layoutPlan, nextLayout, inFolder, BUILTIN_LAYOUTS, dateStamp, timeStamp, shortHome, joinList, blankProject } from "../mods/project-presets/lib.js";
 
 test("fuzzy matches subsequences and ranks tighter matches higher", () => {
   assert.equal(fuzzy("zzz", "herdr"), -1);
@@ -131,4 +131,88 @@ test("parseWorktrees reads -z output, where a path may hold a newline", () => {
   assert.equal(list[1].path, "/r/line\nbreak");
   assert.equal(list[1].branch, "b");
   assert.deepEqual(parseWorktrees(""), []);
+});
+
+test("allLayouts offers the built-ins and lets a user layout replace one of the same name", () => {
+  assert.deepEqual(allLayouts(undefined).map((l) => l.name), BUILTIN_LAYOUTS.map((l) => l.name));
+  const mine = { name: "agent-terminal", panes: [{ type: "agent" }] };
+  const list = allLayouts([mine, { name: "dev", panes: [{ type: "agent" }] }, { name: "", panes: [] }, { panes: [] }, null, { name: "nopanes" }]);
+  assert.deepEqual(list.map((l) => l.name), ["agent-side-terminal", "agent-terminal", "dev"]);
+  assert.equal(list.find((l) => l.name === "agent-terminal"), mine);
+});
+
+test("layoutPlan lists the splits in order and defaults each to the previous pane", () => {
+  const plan = layoutPlan({ name: "dev", panes: [
+    { type: "agent" },
+    { name: "files", command: "yazi .", direction: "right" },
+    { name: "term", type: "shell", direction: "down" },
+    { name: "logs", type: "command", command: " tail -f log ", direction: "down", from: "agent" },
+  ] });
+  assert.deepEqual(plan, [
+    { name: "files", type: "command", command: "yazi .", direction: "right", from: "agent" },
+    { name: "term", type: "shell", command: "", direction: "down", from: "files" },
+    { name: "logs", type: "command", command: "tail -f log", direction: "down", from: "agent" },
+  ]);
+  assert.deepEqual(layoutPlan({ name: "solo", panes: [{ type: "agent" }] }), []);
+  assert.deepEqual(layoutPlan(undefined), []);
+});
+
+test("layoutPlan names the problem in a bad layout", () => {
+  const bad = (panes) => () => layoutPlan({ name: "x", panes });
+  assert.throws(bad([{ type: "agent" }, { type: "shell" }]), /needs direction/);
+  assert.throws(bad([{ type: "agent" }, { type: "shell", direction: "left" }]), /needs direction/);
+  assert.throws(bad([{ type: "agent" }, { type: "tmux", direction: "down" }]), /unknown type/);
+  assert.throws(bad([{ type: "agent" }, { type: "command", direction: "down" }]), /no command/);
+  assert.throws(bad([{ type: "agent" }, { name: "a", direction: "down", from: "later" }, { name: "later", direction: "down" }]), /does not come before/);
+  assert.throws(bad([{ name: "a" }, { name: "a", direction: "down" }]), /two panes are called "a"/);
+});
+
+test("nextLayout cycles none, then each layout, then none again", () => {
+  assert.equal(nextLayout(["a", "b"], ""), "a");
+  assert.equal(nextLayout(["a", "b"], "a"), "b");
+  assert.equal(nextLayout(["a", "b"], "b"), "");
+  assert.equal(nextLayout(["a", "b"], "gone"), "");
+  assert.equal(nextLayout(["a"], undefined), "a");
+});
+
+test("inFolder wraps a command so it starts in the folder, or starts a shell without one", () => {
+  const [sh, c, script, , folder, ...rest] = inFolder("/r/x", ["npm", "run", "dev"]);
+  assert.deepEqual([sh, c, folder, rest], ["sh", "-c", "/r/x", ["npm", "run", "dev"]]);
+  assert.match(script, /cd "\$1"/);
+  assert.deepEqual(inFolder("/r/x").slice(4), ["/r/x"]);
+});
+
+test("normalize gives every project an empty layout", () => assert.equal(normalize({ path: "/a" }).startup.layout, ""));
+
+test("fuzzyPositions marks the letters fuzzy matched, and none for a miss or an empty query", () => {
+  assert.deepEqual(fuzzyPositions("apgw", "api-gateway"), [0, 1, 4, 8]);
+  assert.deepEqual(fuzzyPositions("API", "my-api"), [3, 4, 5]);
+  assert.deepEqual(fuzzyPositions("zzz", "api-gateway"), []);
+  assert.deepEqual(fuzzyPositions("", "api"), []);
+  assert.deepEqual(fuzzyPositions("ba", "ab"), []);
+});
+
+test("highlightRuns groups consecutive matched and unmatched characters", () => {
+  assert.deepEqual(highlightRuns("api-gateway", [0, 1, 4, 8]), [
+    { text: "ap", hit: true }, { text: "i-", hit: false }, { text: "g", hit: true }, { text: "ate", hit: false }, { text: "w", hit: true }, { text: "ay", hit: false },
+  ]);
+  assert.deepEqual(highlightRuns("abc", []), [{ text: "abc", hit: false }]);
+  assert.deepEqual(highlightRuns("", [0]), []);
+});
+
+test("commandName is the program an agent command runs", () => {
+  assert.equal(commandName("claude --model opus"), "claude");
+  assert.equal(commandName("/usr/local/bin/hermes"), "hermes");
+  assert.equal(commandName('"pi" --x'), "pi");
+  assert.equal(commandName(""), "");
+  assert.equal(commandName(undefined), "");
+});
+
+test("agentOptions keeps herdr's agents and adds the usual ones it lacks, marked not installed", () => {
+  const known = [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }, { key: "x", name: "Hermes", run: ["/opt/bin/hermes"], installed: true }];
+  const list = agentOptions(known);
+  assert.deepEqual(list.slice(0, 2), known);
+  assert.deepEqual(list.slice(2).map((a) => a.key), ["codex", "opencode", "pi"]);
+  assert.ok(list.slice(2).every((a) => a.installed === false && a.icon === `icons/${a.key}.svg`));
+  assert.deepEqual(agentOptions(undefined).map((a) => a.key), ["claude", "codex", "opencode", "hermes", "pi"]);
 });

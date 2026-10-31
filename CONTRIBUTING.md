@@ -46,12 +46,12 @@ Use a throwaway git repo as your test project so you don't create worktrees in r
 3. Run the checks:
 
    ```sh
-   node --test test/                    # helpers, git, config and log, with no UI
+   node --test test/                    # helpers, git, config, log and the picker's view, with no window
    herdr-app check mods/project-presets # loads and renders the mod once
    ```
 
    Both must pass. `herdr-app check` doesn't run click handlers or later states, so also try your change in the running app. With debug logging on, the log shows every key, click and git command.
-4. Add a test in `test/` when you change `lib.js`, `git.js`, `config.js` or `log.js`. Tests for the files that import `herdr` load a stand-in for it from `test/helpers/` and run against real throwaway git repos. `main.js` is the UI and isn't covered, so describe how you tried a change to it in the pull request.
+4. Add a test in `test/` when you change `lib.js`, `git.js`, `config.js` or `log.js`. Tests for the files that import `herdr` load a stand-in for it from `test/helpers/` and run against real throwaway git repos. `main.js` runs against a recording stand-in for gpui (`test/helpers/gpui-stub.mjs`), so screens render, keys and clicks work and you can read back text, icons and styles in `test/ui.test.mjs`. Looks (spacing, colors as drawn, animation) still need your eyes: describe how you checked them in the pull request.
 5. If behaviour changes, update `RECIPE.md` (and `README.md` if it is user-facing), including the "Done when" checks.
 
 ## Screenshots

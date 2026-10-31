@@ -314,6 +314,48 @@ test("a launch whose hc call hangs gives up its turn so later launches still run
   G.lockSettings.seconds = 25;
 });
 
+const DEV = { name: "dev", panes: [
+  { type: "agent" },
+  { name: "files", command: "yazi .", direction: "right" },
+  { name: "term", type: "shell", direction: "down" },
+  { name: "logs", type: "command", command: "tail -f log", direction: "down", from: "agent" },
+] };
+
+test("launch builds a layout in the new space's pane, not the window it was opened from, each split from the pane it comes from", async () => {
+  const p = project("/r/api", { startup: { agent: "claude" } });
+  await G.launch(p, "/r/api", "Demo", DEV);
+  const [files, term, logs] = state.splits;
+  assert.ok(state.splits.every((x) => x.pane !== "picker-pane"), "never the window the picker was opened from");
+  assert.deepEqual([files.direction, files.pane], ["right", "pane-of-sp1"]);
+  assert.deepEqual([term.direction, term.pane], ["down", "pane-1"]);
+  assert.deepEqual([logs.direction, logs.pane], ["down", "pane-of-sp1"]);
+  assert.deepEqual(files.argv.slice(4), ["/r/api", "sh", "-c", "yazi ."]);
+  assert.deepEqual(term.argv.slice(4), ["/r/api"]);
+  assert.deepEqual(state.runs.filter((r) => r.command === "pane.focus").map((r) => r.args), [{ pane: "pane-of-sp1" }]);
+});
+
+test("a launch without a layout, or a single-pane one, splits nothing", async () => {
+  await G.launch(project("/r/api"), "/r/api", "Demo");
+  await G.launch(project("/r/api"), "/r/api", "Demo", { name: "solo", panes: [{ type: "agent" }] });
+  assert.deepEqual(state.splits, []);
+});
+
+test("a failed split is logged, ends the layout, and the space still opens with its tabs", async () => {
+  state.splitFails = true;
+  const p = project("/r/api", { startup: { tabs: ["npm test"] } });
+  await G.launch(p, "/r/api", "Demo", DEV);
+  assert.equal(spaceNews().length, 1);
+  assert.equal(state.runs.filter((r) => r.command === "tab.new").length, 1);
+  assert.deepEqual(state.splits, []);
+});
+
+test("send mode still prompts the agent's terminal when a layout adds terminals in the same folder", async () => {
+  const p = project("/r/api", { startup: { agent: "claude", prompt: "go", promptMode: "send" } });
+  await G.launch(p, "/r/api", "Demo", DEV);
+  assert.deepEqual(state.sent, [{ terminal: "t2", text: "go" }]);
+  assert.equal(state.splits.length, 3);
+});
+
 test("a worktree launch opens the repo's space first when asked and it is not open", async () => {
   const p = project("/r/api", { worktree: { repoSpace: true } });
   await G.launch(p, "/wt/api", "Demo · x");

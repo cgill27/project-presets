@@ -2,19 +2,22 @@
 // settings. Type to filter, ↑/↓ and Enter to open, Shift+Enter for the main checkout, Add project / Edit / Worktrees / Delete
 // buttons (or alt/ctrl/cmd + n, e, w, d), Esc to leave.
 
-import { View, div } from "gpui-kit";
+import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
 import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home } from "herdr";
 import { loadConfig, saveConfig } from "./config.js";
 import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch } from "./git.js";
 import { readDemo } from "./demo.js";
 import { initLog, log, logError } from "./log.js";
-import { fuzzy, blankProject, shortHome, splitList, joinList, basename } from "./lib.js";
+import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions } from "./lib.js";
 
 const RECENT = "project-presets.recent";
 // Shortcut hints: ⌘ on macOS (Option+letter types a character there), alt elsewhere.
 const mac = () => window()?.platform === "macos";
 const key = (letter, other = "alt") => (mac() ? `⌘${letter.toUpperCase()}` : `${other}+${letter}`);
+// Herdr binds a bare alt+l to moving between panes, so the layout key needs ctrl (⌘ on macOS) as well, like the open key.
+const FOOTER_SIZE = 12;
+const LAYOUT_HINT = () => (mac() ? "⌘⌥L" : "ctrl+alt+L");
 
 const ROW = 48;
 // Editor sections and the text fields each one shows.
@@ -23,7 +26,7 @@ const SECTION_FIELDS = {
   project: ["name", "path", "group"],
   worktree: ["branchTemplate", "root", "spaceName"],
   git: ["remote", "base"],
-  startup: ["agent", "args", "prompt", "setup", "tabs"],
+  startup: ["agent", "args", "prompt", "layout", "setup", "tabs"],
 };
 const MODES = ["ask", "always", "never"];
 const MODE_HELP = { ask: "ask for a branch name", always: "always a new worktree", never: "open the checkout" };
@@ -41,6 +44,7 @@ const TEXT = [
   ["agent", "Agent command", (p) => p.startup.agent, (p, v) => (p.startup.agent = v), "pick above or type one; empty: plain shell"],
   ["args", "Agent arguments", (p) => p.startup.args, (p, v) => (p.startup.args = v), "e.g. --model opus --permission-mode plan"],
   ["prompt", "First prompt", (p) => p.startup.prompt, (p, v) => (p.startup.prompt = v), "sent to the agent; ignored without one"],
+  ["layout", "Pane layout", (p) => p.startup.layout, (p, v) => (p.startup.layout = v), "a layout name (empty: just the agent); ctrl+alt+L (⌘⌥L) picks one at launch"],
   ["setup", "Setup commands", (p) => joinList(p.startup.setup), (p, v) => (p.startup.setup = splitList(v)), "separate with ;; — each limited to 30 s"],
   ["tabs", "Extra tabs", (p) => joinList(p.startup.tabs), (p, v) => (p.startup.tabs = splitList(v)), "commands, separate with ;;"],
 ];
@@ -53,6 +57,8 @@ export default class ProjectPresets extends View {
     this.ranges = {};
     this.overlay = props()?.overlay;
     this.projects = [];
+    this.layouts = [];
+    this.layoutPick = null; // null: each project's own layout; "": none; else a layout name (set only when it differs from the project's own)
     this.raw = null;
     this.mode = "list"; // list | edit | name | busy
     this.at = 0;
@@ -67,7 +73,8 @@ export default class ProjectPresets extends View {
     cx.timer.after(600, () => this.mode === "list" && this.search.focus());
 
     this.agents = [];
-    knownAgents().then((a) => { this.agents = a.filter((x) => x.installed); cx.notify(); }).catch((e) => logError("knownAgents", e));
+    this.allAgents = []; // every agent herdr knows plus the usual ones, installed or not: all are offered, and a project may name one this machine lacks
+    knownAgents().then((a) => { this.allAgents = agentOptions(a); this.agents = this.allAgents; cx.notify(); }).catch((e) => logError("knownAgents", e));
     initLog();
     this.reload(cx, async () => { const d = await readDemo(); if (d) this.applyDemo(d); });
   }
@@ -95,6 +102,7 @@ export default class ProjectPresets extends View {
       try {
         const c = await loadConfig();
         this.projects = c.projects;
+        this.layouts = allLayouts(c.layouts);
         this.raw = c.raw;
       } catch (e) {
         logError("load config", e);
@@ -154,6 +162,73 @@ export default class ProjectPresets extends View {
 
   selected() { return this.rows()[this.at]; }
 
+  /** The layout name a launch of `p` uses: the picked one, else the project's own. */
+  layoutNameFor(p) { return this.layoutPick ?? p.startup.layout; }
+
+  /** ctrl+alt+L: the next layout for `p`'s launch (none, then each layout). */
+  cycleLayout(p) {
+    const next = nextLayout(this.layouts.map((l) => l.name), this.layoutNameFor(p));
+    this.layoutPick = next === (p.startup.layout ?? "") ? null : next;
+    // The selector stands out for a second so the change is easy to see.
+    const flash = (this.layoutFlash = (this.layoutFlash ?? 0) + 1);
+    this.layoutLit = true;
+    this.cx.timer.after(1000, () => { if (this.layoutFlash === flash) { this.layoutLit = false; this.cx.notify(); } });
+  }
+
+  /** Under the list: a hint line with the keys in bold, then the layout selector. It shows every layout with the
+   *  one this launch uses lit; for a second after a change the lit one turns bold with an accent ring. */
+  footer(t, p, list) {
+    const hints = list
+      ? [["Click", "selects"], ["Double-click / Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"]]
+      : [["Enter", "creates"], ["Esc", "back"]];
+    const dot = () => div().text_color(t.dim).child("·");
+    const current = this.layoutNameFor(p);
+    const lit = this.layoutLit;
+    const choice = (name, label) => {
+      const on = name === current;
+      return div().px(10).py(3).rounded(8).border_1().text_size(11.5)
+        .border_color(on ? (lit ? t.accent : t.solid) : t.input).bg(on ? t.solid : t.raised)
+        .text_color(on ? t.solid_foreground : t.dim).when(on, (el) => (lit ? el.font_bold() : el.font_semibold())).child(label);
+    };
+    return v_flex().gap(8)
+      .child(h_flex().gap(6).items_baseline().flex_wrap().text_size(FOOTER_SIZE)
+        .children(hints.flatMap(([k, w], i) => [
+          ...(i ? [dot()] : []),
+          h_flex().gap(4).child(div().font_semibold().text_color(t.foreground).child(k)).child(div().text_color(t.dim).child(w)),
+        ])))
+      .child(h_flex().gap(6).items_center().flex_wrap().text_size(FOOTER_SIZE)
+        .child(div().text_color(t.dim).child("Layout"))
+        .child(choice("", "Agent only"))
+        .children(this.layouts.map((l) => choice(l.name, l.label ?? l.name)))
+        .child(div().flex_1())
+        .child(div().px(6).rounded(5).border_1().border_color(t.input).bg(t.raised).text_size(10.5).text_color(t.foreground).child(LAYOUT_HINT())));
+  }
+
+  /** A mini icon for an agent entry from herdr's program table (a one-color glyph or a picture). */
+  programIcon(t, program, size = 16) {
+    const box = div().w(size).h(size).flex_none();
+    if (!program?.icon) return box.child(svg("icons/agent.svg").size(size).flex_none().text_color(t.dim));
+    return box.child(program.tint ? svg(program.icon).size(size).flex_none().text_color(t.foreground) : image(program.icon).w(size).h(size).flex_none());
+  }
+
+  shellIcon(t, size = 16) { return div().w(size).h(size).flex_none().child(svg("icons/shell.svg").size(size).flex_none().text_color(t.dim)); }
+
+  /** The mini icon for what a project starts: its agent (claude, hermes, pi…), the shell icon for a plain
+   *  shell, and the generic agent icon for a command herdr has no entry for. */
+  agentIcon(t, p, size = 16) {
+    const name = commandName(p.startup.agent);
+    if (!name) return this.shellIcon(t, size);
+    return this.programIcon(t, this.allAgents.find((a) => a.key === name || commandName((a.run ?? []).join(" ")) === name), size);
+  }
+
+  /** A project's name with the letters the search matched in bold and the accent color. */
+  nameText(t, name) {
+    const at = fuzzyPositions(this.query(), name);
+    const row = h_flex().text_color(t.foreground).font_medium();
+    if (!at.length) return row.child(name);
+    return row.children(highlightRuns(name, at).map((r) => r.hit ? div().font_bold().text_color(t.accent).child(r.text) : div().child(r.text)));
+  }
+
   /** Enter (mainOnly false) follows the project's worktree mode; Shift+Enter opens the checkout itself. */
   activate(mainOnly) {
     const r = this.selected();
@@ -191,6 +266,10 @@ export default class ProjectPresets extends View {
     const log = (m) => { this.notes = [...this.notes, m]; this.cx?.notify(); };
     this.cx?.spawn(async (cx) => {
       try {
+        const layoutName = this.layoutNameFor(p);
+        const layout = layoutName ? this.layouts.find((l) => l.name === layoutName) : null;
+        if (layoutName && !layout) throw new Error(`No layout called "${layoutName}". Layouts: ${this.layouts.map((l) => l.name).join(", ") || "none"}`);
+        if (layout) layoutPlan(layout); // a broken layout is reported before anything is created
         let folder = projectFolder(p);
         let name = p.name;
         const existing = findSpace(p);
@@ -210,7 +289,7 @@ export default class ProjectPresets extends View {
         setShared(RECENT, { ...(shared(RECENT) ?? {}), [p.path]: Date.now() });
         if (p.startup.agent.trim() && p.startup.prompt && p.startup.promptMode === "send") log("Waiting for the agent to be ready for its prompt…");
         // Stay open until the prompt is sent: closing the popup cancels this task.
-        await launch(p, folder, name);
+        await launch(p, folder, name, layout);
         this.close();
       } catch (e) {
         logError("open project", e);
@@ -388,6 +467,7 @@ export default class ProjectPresets extends View {
     const k = e.key;
     const ctrl = e.modifiers.control;
     const mod = ctrl || e.modifiers.alt || e.modifiers.platform; // ctrl, alt or cmd
+    const layoutMod = e.modifiers.alt && (ctrl || e.modifiers.platform);
     if (this.pendingDelete && k !== "d") this.pendingDelete = null;
     if (k === "escape") {
       if (this.mode === "list") this.close();
@@ -401,9 +481,11 @@ export default class ProjectPresets extends View {
       else if (k === "d" && mod) this.deleteSelected();
       else if (k === "w" && mod) this.openWorktrees();
       else if (k === "n" && mod) this.edit(blankProject(), null);
+      else if (k === "l" && layoutMod) this.cycleLayout(this.selected()?.p ?? blankProject());
       else if (k === "e" && mod) this.editSelected();
       else return;
-    } else if (this.mode === "worktrees") {
+    } else if (this.mode === "name" && k === "l" && layoutMod) this.cycleLayout(this.target);
+    else if (this.mode === "worktrees") {
       const n = this.wtRows().length;
       if (k === "down" && n) { this.wtAt = (this.wtAt + 1) % n; this.reveal("pp-worktrees", this.wtScroll, this.wtAt); }
       else if (k === "up" && n) { this.wtAt = (this.wtAt + n - 1) % n; this.reveal("pp-worktrees", this.wtScroll, this.wtAt); }
@@ -449,11 +531,12 @@ export default class ProjectPresets extends View {
     else if (at >= r.start + r.visible) handle.scroll_to_item(Math.max(0, at - r.visible + 1), "top");
   }
 
-  button(t, id, text, primary, action) {
-    return h_flex().id(id).h(32).px(14).items_center().rounded(8).border_1()
+  button(t, id, text, primary, action, lead = null) {
+    return h_flex().id(id).gap(lead ? 6 : 0).h(32).px(14).items_center().rounded(8).border_1()
       .border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
-      .hover((s) => s.opacity(0.88)).on_click(this.guard(`button ${id}`, (...a) => { log("debug", "click", { id }); return action(...a); })).child(text);
+      .hover((s) => s.opacity(0.88)).on_click(this.guard(`button ${id}`, (...a) => { log("debug", "click", { id }); return action(...a); }))
+      .when(Boolean(lead), (el) => el.child(lead)).child(text);
   }
 
   title(t, text, hint) {
@@ -471,8 +554,9 @@ export default class ProjectPresets extends View {
       return h_flex().id(`pp-${i}`).w_full().h(48).flex_none().overflow_hidden().px(12).gap(10).items_center().rounded(8).cursor_pointer()
         .when(on, (el) => el.bg(t.selected))
         .child(div().w(10).flex_none().text_color(r.space ? (t[r.space.status] ?? t.done) : t.dim).child(r.space ? "●" : r.p.pinned ? "★" : "·"))
+        .child(this.agentIcon(t, r.p))
         .child(v_flex().flex_1().min_w(0)
-          .child(div().text_color(t.foreground).font_medium().child(r.p.name))
+          .child(this.nameText(t, r.p.name))
           .child(div().text_size(11).text_color(t.dim).truncate().child(shortHome(projectFolder(r.p), home()))))
         .when(Boolean(r.p.group), (el) => el.child(div().text_size(11).text_color(t.dim).child(r.p.group)))
         .child(div().text_size(11).text_color(t.dim).child(mode === "never" ? "checkout" : mode === "ask" ? "worktree?" : "worktree"));
@@ -493,7 +577,7 @@ export default class ProjectPresets extends View {
       }))
       .when(!rows.length, (el) => el.child(div().py(14).text_color(t.dim).child(this.projects.length ? "No project matches." : "No projects yet. Click Add project below a git checkout.")))
       .when(Boolean(this.pendingDelete), (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove "${this.pendingDelete.name}" from the list? Press ${key("d")} again or click Delete. The folder and its worktrees stay.`)))
-      .child(div().text_size(11).text_color(t.dim).child(`Click selects, double-click or Enter opens · Shift+Enter checkout · ${key("n")} add · ${key("e")} edit · ${key("w")} worktrees · ${key("d")} delete`))
+      .child(this.footer(t, this.selected()?.p ?? blankProject(), true))
       .child(h_flex().gap(8).items_center().justify_end()
         .when(rows.length > 0, (el) => el.child(this.button(t, "pp-wt", "Worktrees", false, () => { this.openWorktrees(); cx.notify(); }))
           .child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); }))
@@ -543,13 +627,28 @@ export default class ProjectPresets extends View {
       .child(h_flex().h(36).px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.nameInput).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .child(div().text_size(12).text_color(this.error ? t.blocked : t.dim).child(this.error ?? (this.preview ? `branch: ${this.preview}` : "")))
-      .child(div().text_size(11).text_color(t.dim).child(`from ${p.git.remote}/${p.git.base}${p.git.fetch ? " after a fetch" : ""} · Enter to create`));
+      .child(div().text_size(FOOTER_SIZE).text_color(t.dim).child(`from ${p.git.remote}/${p.git.base}${p.git.fetch ? " after a fetch" : ""} · Enter to create`))
+      .child(this.footer(t, p, false));
+  }
+
+  /** The busy screen's steps: done ones get a ✓, the current one a spinner (or a ✗ once it failed). */
+  stepRows(t) {
+    const notes = this.notes.length ? this.notes : ["Starting…"];
+    const mark = (i) => {
+      const last = i === notes.length - 1;
+      if (!last) return div().text_color(t.done).child("✓");
+      if (this.error) return div().text_color(t.blocked).child("✗");
+      return div().text_color(t.accent).frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 80).child("⠋");
+    };
+    return notes.map((n, i) => h_flex().gap(8).items_baseline().text_size(12)
+      .child(mark(i).w(12).flex_none())
+      .child(div().flex_1().min_w(0).text_color(i === notes.length - 1 && !this.error ? t.foreground : t.dim).child(n)));
   }
 
   renderBusy(t) {
     return v_flex().gap(8)
       .child(this.title(t, this.target.name, this.error ? "Esc back" : "working…"))
-      .child(v_flex().gap(2).children(this.notes.map((n) => div().text_size(12).text_color(t.dim).child(n))))
+      .child(v_flex().gap(3).children(this.stepRows(t)))
       .when(Boolean(this.error), (el) => el.child(div().text_size(12.5).text_color(t.blocked).child(this.error)));
   }
 
@@ -565,7 +664,7 @@ export default class ProjectPresets extends View {
         .child(Input.new(state).h(34).px(10).rounded(8).border_1().border_color(this.field === key ? t.accent : t.input).bg(t.background).text_size(12.8).text_color(t.foreground));
     };
     const agentState = () => this.fields.find(([k]) => k === "agent")[1];
-    const chip = (id, text, value) => this.button(t, id, text, agentState().value().trim() === value, () => { agentState().set_value(value); this.draft.startup.promptMode = /^hermes\b/.test(value) ? "send" : "arg"; cx.notify(); });
+    const chip = (id, text, value, lead, dim) => this.button(t, id, text, agentState().value().trim() === value, () => { agentState().set_value(value); this.draft.startup.promptMode = /^hermes\b/.test(value) ? "send" : "arg"; cx.notify(); }, lead).when(dim, (el) => el.opacity(0.6));
     const toggle = (id, text, value, set) => this.button(t, id, `${value ? "✓" : "○"} ${text}`, false, () => { set(!value); cx.notify(); });
     const sections = {
       project: () => [
@@ -596,14 +695,15 @@ export default class ProjectPresets extends View {
       startup: () => [
         label("Agent"),
         h_flex().flex_wrap().gap(6)
-          .child(chip("pp-agent-shell", "Shell", ""))
-          .children(this.agents.map((a, i) => chip(`pp-agent-${i}`, a.name, a.run.join(" ")))),
+          .child(chip("pp-agent-shell", "Shell", "", this.shellIcon(t, 14), false))
+          .children(this.agents.map((a, i) => chip(`pp-agent-${i}`, a.name, a.run.join(" "), this.programIcon(t, a, 14), a.installed === false))),
         field("agent"),
         field("args"),
         field("prompt"),
         h_flex().pt(8).gap(8).items_center()
           .child(this.button(t, "pp-pmode", `Prompt: ${d.startup.promptMode === "send" ? "typed after start" : "command-line argument"}`, false, () => { d.startup.promptMode = d.startup.promptMode === "send" ? "arg" : "send"; cx.notify(); }))
           .child(div().text_size(11.5).text_color(t.dim).child(d.startup.promptMode === "send" ? "for agents that reject a prompt argument" : "claude and most agents")),
+        field("layout"),
         field("setup"),
         field("tabs"),
       ],
