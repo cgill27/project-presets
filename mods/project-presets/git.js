@@ -17,7 +17,11 @@ async function exec(command, args = [], options = {}) {
 const git = (cwd, args) => exec("git", args, { cwd });
 const out = (r) => r.stdout.trim();
 
-export const projectFolder = (p) => expandHome(p.path, home());
+// herdr's home() crosses into the app on every call, and the picker asks for a folder per project per render.
+let homeDir;
+const homeOf = () => (homeDir ??= home());
+
+export const projectFolder = (p) => expandHome(p.path, homeOf());
 
 /** Checks the folder is a git checkout. Returns { top, branch }. Throws with the reason. */
 export async function inspect(folder) {

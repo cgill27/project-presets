@@ -8,6 +8,11 @@ import { join } from "node:path";
 const root = mkdtempSync(join(tmpdir(), "pp-herdr-"));
 mkdirSync(join(root, "app", "data"), { recursive: true });
 
+// How often each call into the app was made, so a test can say a render does not repeat them per row.
+export const calls = {};
+const count = (name) => { calls[name] = (calls[name] ?? 0) + 1; };
+export const resetCalls = () => { for (const k of Object.keys(calls)) delete calls[k]; };
+
 export const state = {
   home: join(root, "home"),
   appHome: join(root, "app"),
@@ -30,9 +35,9 @@ export function reset() {
   for (const k of Object.keys(store)) delete store[k];
 }
 
-export const home = () => state.home;
+export const home = () => { count("home"); return state.home; };
 export const appHome = () => state.appHome;
-export const spaces = () => state.spaces;
+export const spaces = () => { count("spaces"); return state.spaces; };
 export const focused = () => state.focused;
 
 export function exec(command, args = [], options = {}) {
@@ -113,10 +118,11 @@ const store = {};
 state.known = [{ key: "claude", name: "Claude Code", run: ["claude"], icon: "icons/claude.svg", tint: false, installed: true }];
 state.closed = 0;
 export const knownAgents = async () => state.known;
-export const window = () => ({ platform: state.platform ?? "linux" });
-export const theme = () => new Proxy({}, { get: (_t, k) => `#${String(k)}` });
+export const window = () => { count("window"); return { platform: state.platform ?? "linux" }; };
+export const theme = () => { count("theme"); return themeProxy(); };
+const themeProxy = () => new Proxy({}, { get: (_t, k) => `#${String(k)}` });
 export const props = () => ({ overlay: "ov1" });
 export const closeOverlay = () => { state.closed++; };
 export const pickFolder = async () => state.picked ?? null;
-export const shared = (k) => store[k];
+export const shared = (k) => { count("shared"); return store[k]; };
 export const setShared = (k, v) => { store[k] = v; };

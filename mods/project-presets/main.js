@@ -4,7 +4,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
-import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home } from "herdr";
+import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home, spaces } from "herdr";
 import { loadConfig, saveConfig } from "./config.js";
 import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch, gitSummary } from "./git.js";
 import { readDemo } from "./demo.js";
@@ -14,7 +14,12 @@ import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayou
 const RECENT = "project-presets.recent";
 const DETAIL = "project-presets.detail"; // false: hide the detail card (kept between sessions)
 // Shortcut hints: ⌘ on macOS (Option+letter types a character there), alt elsewhere.
-const mac = () => window()?.platform === "macos";
+// Calls into herdr (window, home, shared, spaces) are not free, and a render draws every row: each is asked once per
+// render (`this.frame`) or remembered (the platform, until the next render).
+let platformCache;
+const mac = () => (platformCache ??= window()?.platform ?? "") === "macos";
+let homeDir;
+const homeOf = () => (homeDir ??= home());
 const key = (letter, other = "alt") => (mac() ? `⌘${letter.toUpperCase()}` : `${other}+${letter}`);
 // Herdr binds a bare alt+l to moving between panes, so the layout key needs ctrl (⌘ on macOS) as well, like the open key.
 const FOOTER_SIZE = 12;
@@ -129,10 +134,15 @@ export default class ProjectPresets extends View {
         if (this.infoToken !== token || this.closing) return;
         const folder = projectFolder(p);
         this.info[folder] = await gitSummary(folder);
-        cx.notify();
+        // A redraw per answer would repaint the whole list for each project: batch them.
+        if (!this.infoPending) {
+          this.infoPending = true;
+          cx.timer.after(150, () => { this.infoPending = false; cx.notify(); });
+        }
       }
     };
     await Promise.all([worker(), worker(), worker()]);
+    cx.notify();
   }
 
   /** Puts the picker in the view a demo file names (see demo.js). */
@@ -171,12 +181,15 @@ export default class ProjectPresets extends View {
 
   // ---- list -------------------------------------------------------------
 
-  rows() {
+  rows(recent) {
+    if (this.frame) return this.frame.rows; // while rendering, every caller gets the same list
+    recent ??= shared(RECENT) ?? {};
     const q = this.query();
-    const recent = shared(RECENT) ?? {};
+    const open = spaces().filter((s) => !s.machine); // once, not once per project
     const rows = this.projects.map((p) => {
       const score = Math.max(fuzzy(q, p.name), fuzzy(q, p.group), fuzzy(q, basename(p.path)) - 1);
-      return { p, score, space: findSpace(p), used: recent[p.path] ?? 0 };
+      const folder = projectFolder(p);
+      return { p, score, space: open.find((s) => s.folder === folder), used: recent[p.path] ?? 0 };
     }).filter((r) => r.score >= 0);
     rows.sort((a, b) => q
       ? b.score - a.score
@@ -548,7 +561,16 @@ export default class ProjectPresets extends View {
   render() {
     const cx = this.cx;
     const t = theme();
-    const body = { list: () => this.renderList(t, cx), edit: () => this.renderEdit(t, cx), worktrees: () => this.renderWorktrees(t, cx), name: () => this.renderName(t), busy: () => this.renderBusy(t) }[this.mode]();
+    platformCache = undefined;
+    this.frame = null;
+    const recent = shared(RECENT) ?? {};
+    this.frame = { rows: this.mode === "list" ? this.rows(recent) : [], colors: shared("space.colors"), recent };
+    let body;
+    try {
+      body = { list: () => this.renderList(t, cx), edit: () => this.renderEdit(t, cx), worktrees: () => this.renderWorktrees(t, cx), name: () => this.renderName(t), busy: () => this.renderBusy(t) }[this.mode]();
+    } finally {
+      this.frame = null;
+    }
     return v_flex().id("project-presets").track_focus(this.handle).w_full().min_h(0).p(18).gap(10).bg(t.popover).text_size(13)
       .on_key_down(this.guard("key", (e, cx) => { log("debug", "key", { key: e.key, mods: e.modifiers, mode: this.mode }); this.keys(e, cx); }))
       .child(body);
@@ -600,7 +622,7 @@ export default class ProjectPresets extends View {
     const tile = h_flex().size(size).flex_none().rounded(5).items_center().justify_center().text_size(size * 0.58).font_bold();
     const initial = [...(p.name ?? "")][0]?.toUpperCase() ?? "?";
     if (!space) return tile.border_1().border_color(t.input).text_color(t.dim).child(initial);
-    return tile.bg(spaceColor(shared("space.colors"), space.id, t)).text_color("#ffffff").child(initial);
+    return tile.bg(spaceColor(this.frame ? this.frame.colors : shared("space.colors"), space.id, t)).text_color("#ffffff").child(initial);
   }
 
   /** A small outlined label. */
@@ -652,7 +674,7 @@ export default class ProjectPresets extends View {
         .child(kv("Branch", info?.branch ?? "…"))
         .child(kv("Changes", info?.dirty ? div().text_color(t.working).child(dirtyText) : dirtyText))
         .child(kv("Worktrees", info == null ? "…" : String(info.worktrees)))
-        .child(kv("Last opened", ago((shared(RECENT) ?? {})[p.path]))))
+        .child(kv("Last opened", ago((this.frame?.recent ?? shared(RECENT) ?? {})[p.path]))))
       .child(v_flex().gap(6)
         .child(h_flex().items_center().child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(`LAYOUT${this.layoutPick !== null ? " · PICKED" : ""}`))
           .child(div().px(6).rounded(5).border_1().border_color(t.input).text_size(10.5).text_color(t.foreground).child(LAYOUT_HINT())))
@@ -706,7 +728,7 @@ export default class ProjectPresets extends View {
         .child(this.agentIcon(t, r.p))
         .child(v_flex().flex_1().min_w(0)
           .child(this.nameText(t, r.p.name))
-          .child(div().text_size(11).text_color(t.dim).truncate().child(shortHome(projectFolder(r.p), home()))))
+          .child(div().text_size(11).text_color(t.dim).truncate().child(shortHome(projectFolder(r.p), homeOf()))))
         .when(Boolean(r.p.group), (el) => el.child(div().text_size(11).text_color(t.dim).child(r.p.group)))
         .when(Boolean(info), (el) => el.child(h_flex().gap(5).flex_none()
           .child(this.tag(t, info.branch, t.dim, t.input))
@@ -750,7 +772,7 @@ export default class ProjectPresets extends View {
       .child(div().w(14).flex_none().text_color(this.wtSel.has(w.path) ? t.accent : t.dim).child(this.wtSel.has(w.path) ? "☑" : "☐"))
       .child(v_flex().flex_1().min_w(0)
         .child(div().text_color(t.foreground).font_medium().truncate().child(w.branch ?? "(detached)"))
-        .child(div().text_size(11).text_color(t.dim).truncate().child(shortHome(w.path, home()))))
+        .child(div().text_size(11).text_color(t.dim).truncate().child(shortHome(w.path, homeOf()))))
       .when(Boolean(w.space), (el) => el.child(div().text_size(11).text_color(t.dim).child("open")))
       .when(w.dirty, (el) => el.child(div().text_size(11).text_color(t.blocked).child("uncommitted")))
       .when(w.locked, (el) => el.child(div().text_size(11).text_color(t.blocked).child("locked")))

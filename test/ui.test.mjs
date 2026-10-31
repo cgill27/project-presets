@@ -7,7 +7,7 @@ import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { makeRepo, scratch, sh } from "./helpers/repo.mjs";
 
-const { state, reset } = await import("./helpers/herdr-stub.mjs");
+const { state, reset, calls, resetCalls } = await import("./helpers/herdr-stub.mjs");
 const { textOf, findAll } = await import("./helpers/gpui-stub.mjs");
 const { default: Picker } = await import("../mods/project-presets/main.js");
 const { normalize } = await import("../mods/project-presets/lib.js");
@@ -795,4 +795,51 @@ test("a preview error from stale input does not replace the current preview", as
   await cx.settle();
   assert.equal(v.preview, "ada/fine");
   assert.equal(v.error, null);
+});
+
+// ---------------------------------------------------------------- render cost
+
+test("a render asks herdr for spaces, colors, recent projects, theme and home once, however many projects there are", async () => {
+  const projects = Array.from({ length: 30 }, (_, i) => proj(`proj-${i}`, `/r/p${i}`, { group: "g", pinned: i % 7 === 0 }));
+  const { v } = await open(projects);
+  state.spaces = Array.from({ length: 12 }, (_, i) => ({ id: `s${i}`, folder: `/r/p${i}`, machine: null, status: "idle" }));
+  const { setShared } = await import("./helpers/herdr-stub.mjs");
+  setShared("space.colors", { s1: "ansi4" });
+  resetCalls();
+  v.render();
+  const { home, ...rest } = calls;
+  assert.deepEqual(rest, { theme: 1, shared: 2, spaces: 1, window: 1 });
+  assert.ok((home ?? 0) <= 1, "home is remembered");
+  v.search.set_value("proj");
+  resetCalls();
+  v.render();
+  assert.ok(calls.spaces === 1 && calls.shared === 2, JSON.stringify(calls));
+});
+
+test("rendering with no stored space colors still reads them once", async () => {
+  const { v } = await open([proj("a", "/r/a"), proj("b", "/r/b"), proj("c", "/r/c")]);
+  state.spaces = [{ id: "s1", folder: "/r/a", machine: null, status: "idle" }, { id: "s2", folder: "/r/b", machine: null, status: "idle" }];
+  resetCalls();
+  v.render();
+  assert.equal(calls.shared, 2);
+});
+
+test("a render does not repaint once per git answer: the answers are batched", async () => {
+  const projects = Array.from({ length: 6 }, (_, i) => proj(`p${i}`, makeRepo()));
+  const { v, cx } = await open(projects);
+  let notified = 0;
+  const counting = { ...cx, notify: () => { notified++; }, timer: { after: (ms, fn) => cx.timers.push({ ms, fn }) } };
+  cx.timers.length = 0;
+  v.infoPending = false; // the timer from opening the picker never fires in this fake
+  await v.loadInfo(counting);
+  assert.ok(notified <= 2, `${notified} redraws for 6 projects`);
+  assert.ok(cx.timers.filter((t) => t.ms === 150).length >= 1, "a batching timer was set");
+});
+
+test("the platform and home are asked once per render, not once per key hint or row", async () => {
+  const { v } = await open([proj("a", "/r/a"), proj("b", "/r/b"), proj("c", "/r/c")]);
+  resetCalls();
+  v.render();
+  assert.equal(calls.window, 1);
+  assert.ok((calls.home ?? 0) <= 1, "home is remembered, not asked per row");
 });
