@@ -9,7 +9,7 @@ const file = `${state.appHome}/data/project-presets.json`;
 
 test("a missing file is an empty list", async () => {
   reset();
-  assert.deepEqual(await loadConfig(), { projects: [], layouts: [], raw: null });
+  assert.deepEqual(await loadConfig(), { projects: [], layouts: [], gitInfo: false, raw: null });
 });
 
 test("save then load round-trips and fills defaults", async () => {
@@ -56,4 +56,16 @@ test("a missing or malformed layouts key is an empty list", async () => {
   assert.deepEqual((await loadConfig()).layouts, []);
   rmSync(file);
   assert.deepEqual((await loadConfig()).layouts, []);
+});
+
+test("git details are off unless the data file says gitInfo: true", async () => {
+  writeFileSync(file, JSON.stringify({ projects: [] }));
+  assert.equal((await loadConfig()).gitInfo, false);
+  writeFileSync(file, JSON.stringify({ projects: [], gitInfo: "yes" }));
+  assert.equal((await loadConfig()).gitInfo, false, "only the value true counts");
+  writeFileSync(file, JSON.stringify({ projects: [], gitInfo: true }));
+  assert.equal((await loadConfig()).gitInfo, true);
+  const { raw, projects } = await loadConfig();
+  await saveConfig(projects, raw);
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).gitInfo, true, "saving keeps it");
 });

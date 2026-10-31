@@ -69,6 +69,7 @@ export default class ProjectPresets extends View {
     this.refreshSnap();
     cx.timer.every(3000, (cx) => { if (this.refreshSnap()) cx.notify(); });
     this.detail = shared(DETAIL) === true; // the detail card beside the list: off until asked for (ctrl+alt+I), it makes the popup slow
+    this.gitInfo = false;
     this.info = {}; // folder → { branch, dirty, worktrees } (null: not readable), filled in after the list shows
     this.layoutPick = null; // null: each project's own layout; "": none; else a layout name (set only when it differs from the project's own)
     this.raw = null;
@@ -115,6 +116,7 @@ export default class ProjectPresets extends View {
         const c = await loadConfig();
         this.projects = c.projects;
         this.layouts = allLayouts(c.layouts);
+        this.gitInfo = c.gitInfo;
         this.raw = c.raw;
       } catch (e) {
         logError("load config", e);
@@ -122,7 +124,9 @@ export default class ProjectPresets extends View {
       }
       if (after) await after();
       cx.notify();
-      this.loadInfo(cx);
+      // Branch, changed files and worktrees per project: off unless "gitInfo": true is in the data file. It runs git in
+      // every project each time the picker opens, and the picker is slow enough already.
+      if (this.gitInfo) this.loadInfo(cx);
     });
   }
 
@@ -693,9 +697,7 @@ export default class ProjectPresets extends View {
         .when(Boolean(r.space), (el) => el.child(this.tag(t, r.space.status === "working" ? "agent working" : "open", r.space.status === "working" ? t.working : t.done))))
       .child(v_flex().gap(3)
         .child(kv("Agent", program?.name ?? (name || "plain shell")))
-        .child(kv("Branch", info?.branch ?? "…"))
-        .child(kv("Changes", dirty))
-        .child(kv("Worktrees", info == null ? "…" : String(info.worktrees)))
+        .when(this.gitInfo, (el) => el.child(kv("Branch", info?.branch ?? "…")).child(kv("Changes", dirty)).child(kv("Worktrees", info == null ? "…" : String(info.worktrees))))
         .child(kv("Last opened", ago(this.snap.recent[p.path]))))
       .child(h_flex().items_center().child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(`LAYOUT${this.layoutPick !== null ? " · PICKED" : ""}`))
         .child(div().text_size(10.5).text_color(t.dim).child(LAYOUT_HINT())))

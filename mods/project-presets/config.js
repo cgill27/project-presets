@@ -8,10 +8,10 @@ const file = () => `${appHome()}/data/project-presets.json`;
  *  hand edit made in between is refused instead of overwritten. */
 export async function loadConfig() {
   const raw = await readTextFile(file());
-  if (raw == null) return { projects: [], layouts: [], raw: null };
+  if (raw == null) return { projects: [], layouts: [], gitInfo: false, raw: null };
   try {
     const data = JSON.parse(raw);
-    return { projects: (data.projects ?? []).map(normalize), layouts: Array.isArray(data.layouts) ? data.layouts : [], raw };
+    return { projects: (data.projects ?? []).map(normalize), layouts: Array.isArray(data.layouts) ? data.layouts : [], gitInfo: data.gitInfo === true, raw };
   } catch (e) {
     throw new Error(`${file()} is not valid JSON: ${e.message}`);
   }
