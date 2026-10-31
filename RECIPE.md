@@ -1,6 +1,6 @@
 # Project presets
 
-A project picker for the Herdr app. You keep a list of local git checkouts, each with its own settings: whether selecting it opens the checkout or a fresh worktree, how the branch is named, what git does first, and what starts in the new space. `ctrl-alt-p` (`cmd-p` on macOS) opens a fuzzy-searchable list; Enter does what that project is set up to do.
+A project picker for the Herdr app. You keep a list of local git checkouts, each with its own settings: whether selecting it opens the checkout or a fresh worktree, how the branch is named, what git does first, and what starts in the new space. `ctrl-alt-p` (`cmd-alt-p` on macOS) opens a fuzzy-searchable list; Enter does what that project is set up to do.
 
 ![Project presets](preview.png)
 
@@ -35,7 +35,7 @@ The editor replaces the list in the same popup, in four sections chosen by butto
 ## Built from
 
 - `mods/project-presets/`: `main.js` (the View: list, name step, busy, editor and worktree modes), `git.js` (every git call, worktree creation and removal, launching), `config.js`, `lib.js` (pure helpers, tested with node), `log.js` (error and debug log), `demo.js` (optional screenshot hook), `mod.json` (`place: "none"`, popup overlay 680 x 0.8, `at: "top"`, `offset: 40`).
-- `keys.json`: `"global": { "ctrl-alt-p": "mod.open:project-presets", "cmd-p": "mod.open:project-presets" }` (ctrl-alt-p for Linux and Windows, cmd-p for macOS), merged into the person's file. Ask before replacing a key they already use; `cmd-alt-p` is the fallback on macOS.
+- `keys.json`: `"global": { "ctrl-alt-p": "mod.open:project-presets", "cmd-alt-p": "mod.open:project-presets" }` (ctrl-alt-p for Linux and Windows, cmd-alt-p for macOS; cmd-p is herdr's built-in space picker there, so it is not used), merged into the person's file. Ask before replacing a key they already use; `cmd-alt-p` is already the macOS default, so a clash there means choosing another key.
 - Config file `~/.config/herdr-app/data/project-presets.json` (hand-editable, written with `writeTextFile` and its expected previous text):
 
 ```json
@@ -73,7 +73,7 @@ The editor replaces the list in the same popup, in four sections chosen by butto
 ## Done when
 
 - `herdr-app check mods/project-presets` passes.
-- `ctrl-alt-p` (or `cmd-p` on macOS) opens the picker; typing `dmo` ranks a project named Demo first.
+- `ctrl-alt-p` (or `cmd-alt-p` on macOS) opens the picker; typing `dmo` ranks a project named Demo first.
 - Adding a project with Add project and Browse… writes it to `data/project-presets.json`; a folder that isn't a git checkout is refused with a message.
 - With mode `ask`, typing "fix login" shows `<user>/<date>-fix-login` and Enter creates that worktree under the configured root, from `<remote>/<base>`, in a new space.
 - Selecting the same project again with `always` gives `…-2`, not an error.
