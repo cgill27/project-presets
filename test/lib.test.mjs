@@ -39,3 +39,12 @@ test("splitArgs keeps quoted words together", () => {
   assert.deepEqual(splitArgs(`--model opus --append-system-prompt "be brief" 'x y'`), ["--model", "opus", "--append-system-prompt", "be brief", "x y"]);
   assert.deepEqual(splitArgs(""), []);
 });
+
+test("worktree defaults cover the space name and the repo space", () => {
+  const p = normalize({ path: "/r/x", worktree: { mode: "always" } });
+  assert.equal(p.worktree.mode, "always");
+  assert.equal(p.worktree.spaceName, "{name} · {branch}");
+  assert.equal(p.worktree.repoSpace, false);
+  assert.equal(expand(p.worktree.spaceName, { name: "API", branch: "me/2026-10-31-x" }), "API · me/2026-10-31-x");
+  assert.equal(expand("{slug}", { slug: "add-search" }), "add-search");
+});

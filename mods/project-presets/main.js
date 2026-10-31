@@ -6,7 +6,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
 import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home } from "herdr";
 import { loadConfig, saveConfig } from "./config.js";
-import { inspect, projectFolder, previewBranch, createWorktree, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch } from "./git.js";
+import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch } from "./git.js";
 import { readDemo } from "./demo.js";
 import { initLog, log, logError } from "./log.js";
 import { fuzzy, blankProject, shortHome, splitList, joinList, basename } from "./lib.js";
@@ -21,7 +21,7 @@ const ROW = 48;
 const SECTIONS = [["project", "Project"], ["worktree", "Worktree"], ["git", "Git"], ["startup", "Startup"]];
 const SECTION_FIELDS = {
   project: ["name", "path", "group"],
-  worktree: ["branchTemplate", "root"],
+  worktree: ["branchTemplate", "root", "spaceName"],
   git: ["remote", "base"],
   startup: ["agent", "args", "prompt", "setup", "tabs"],
 };
@@ -35,6 +35,7 @@ const TEXT = [
   ["group", "Group", (p) => p.group, (p, v) => (p.group = v)],
   ["branchTemplate", "Branch name", (p) => p.worktree.branchTemplate, (p, v) => (p.worktree.branchTemplate = v), "{user} {date} {slug} {repo} {project}"],
   ["root", "Worktree folder", (p) => p.worktree.root, (p, v) => (p.worktree.root = v), "{repo} {branch} plus the above"],
+  ["spaceName", "Space name", (p) => p.worktree.spaceName, (p, v) => (p.worktree.spaceName = v), "the sidebar name: {name} {branch} {slug} {user} {date} {repo}"],
   ["remote", "Remote", (p) => p.git.remote, (p, v) => (p.git.remote = v)],
   ["base", "Base branch", (p) => p.git.base, (p, v) => (p.git.base = v)],
   ["agent", "Agent command", (p) => p.startup.agent, (p, v) => (p.startup.agent = v), "pick above or type one; empty: plain shell"],
@@ -196,7 +197,7 @@ export default class ProjectPresets extends View {
         if (worktree) {
           const wt = await createWorktree(p, slugText, log);
           folder = wt.folder;
-          name = `${p.name} · ${wt.branch}`;
+          name = worktreeSpaceName(p, wt);
           await runSetup(p, folder, log);
         } else if (existing) {
           setShared(RECENT, { ...(shared(RECENT) ?? {}), [p.path]: Date.now() });
@@ -580,6 +581,10 @@ export default class ProjectPresets extends View {
           .child(div().text_size(11.5).text_color(t.dim).child(MODE_HELP[d.worktree.mode])),
         field("branchTemplate"),
         field("root"),
+        field("spaceName"),
+        h_flex().pt(12).gap(8).items_center()
+          .child(toggle("pp-repospace", "Open the repo's space first", d.worktree.repoSpace, (v) => (d.worktree.repoSpace = v)))
+          .child(div().flex_1().min_w(0).text_size(11.5).text_color(t.dim).child("worktrees then nest under it in the sidebar")),
       ],
       git: () => [
         h_flex().pt(10).gap(8)

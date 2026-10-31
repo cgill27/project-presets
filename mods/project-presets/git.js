@@ -50,6 +50,7 @@ export async function templateVars(project, slugText) {
     slug: slug(slugText) || timeStamp(),
     repo: basename(top),
     project: slug(project.name),
+    name: project.name,
   };
 }
 
@@ -102,7 +103,7 @@ export async function createWorktree(project, slugText, log) {
   log(`git worktree add ${branch} from ${base}…`);
   const r = await git(folder, ["worktree", "add", "--no-track", "-b", branch, path, base]);
   if (r.code !== 0) throw new Error(out({ stdout: r.stderr }) || "git worktree add failed");
-  return { folder: path, branch };
+  return { folder: path, branch, vars };
 }
 
 /** The main checkout, brought up to date when fast-forward is on and that's safe. */
@@ -134,6 +135,12 @@ export async function runSetup(project, folder, log) {
 export const findSpace = (project) => spaces().find((s) => !s.machine && s.folder === projectFolder(project));
 
 /** Opens the folder as a space, with the project's agent, first prompt and extra tabs. */
+/** The sidebar name for a worktree's space, from the project's template; falls back to "<name> · <branch>". */
+export function worktreeSpaceName(project, wt) {
+  const name = expand(project.worktree.spaceName, { ...wt.vars, branch: wt.branch }).trim();
+  return name || `${project.name} · ${wt.branch}`;
+}
+
 export async function launch(project, folder, name) {
   const { agent, args, prompt, promptMode, tabs } = project.startup;
   const argv = agent.trim() ? [...splitArgs(agent), ...splitArgs(args)] : [];
@@ -142,6 +149,12 @@ export async function launch(project, folder, name) {
   // that read a positional argument as a subcommand).
   const send = argv.length && prompt && promptMode === "send";
   const known = send ? new Set((await liveTerminals()).map((t) => t.address)) : null;
+  // Herdr nests a worktree's space under its repo's own space, but only while that one is open.
+  const main = projectFolder(project);
+  if (project.worktree.repoSpace && folder !== main && !findSpace(project)) {
+    log("debug", "opening the repo's space first", { main });
+    run("space.new", { name: project.name, folder: main });
+  }
   log("debug", "launch", { folder, name, argv, promptMode, tabs });
   run("space.new", { name, folder, ...(argv.length ? { argv, ...(prompt && !send ? { task: prompt } : {}) } : {}) });
   const space = focused()?.space;

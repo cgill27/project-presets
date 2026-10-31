@@ -15,7 +15,7 @@ A popup, 680px wide, top-aligned 40px down, up to 80% of the window high, on the
 
 Ordering with an empty search: projects with an open space, pinned ones, recently used, then by name. With a query: best fuzzy match first (subsequence match on name, group and folder name; consecutive and word-start letters score higher).
 
-The editor replaces the list in the same popup, in four sections chosen by buttons under the title. **Project:** Name, Folder (+ Browse…), Group, Pin to top. **Worktree:** the mode button (ask / always / never), Branch name, Worktree folder. **Git:** Fetch first, Fast-forward checkout, Remote, Base branch. **Startup:** an Agent button per installed agent from `knownAgents()` plus Shell, Agent command, Agent arguments, First prompt with a Prompt delivery button, Setup commands, Extra tabs. Buttons: Delete (asks for a second click), Cancel, Save. Tab moves between the fields of the current section.
+The editor replaces the list in the same popup, in four sections chosen by buttons under the title. **Project:** Name, Folder (+ Browse…), Group, Pin to top. **Worktree:** the mode button (ask / always / never), Branch name, Worktree folder, Space name, and an "Open the repo's space first" toggle. **Git:** Fetch first, Fast-forward checkout, Remote, Base branch. **Startup:** an Agent button per installed agent from `knownAgents()` plus Shell, Agent command, Agent arguments, First prompt with a Prompt delivery button, Setup commands, Extra tabs. Buttons: Delete (asks for a second click), Cancel, Save. Tab moves between the fields of the current section.
 
 ## How it behaves
 
@@ -29,6 +29,7 @@ The editor replaces the list in the same popup, in four sections chosen by butto
 - Worktree creation: `git fetch <remote>` (a failure is logged and the local ref is used), then `git worktree add --no-track -b <branch> <folder> <remote>/<base>`. A taken branch or folder gets `-2`, `-3`… up to `-20`.
 - Fast-forward only happens on the checkout when it is on the base branch, clean, and can fast-forward.
 - **Worktree cleanup** has a filter box (fuzzy, on branch and folder name) over a scrolling list of the repo's linked worktrees (`git worktree list --porcelain`, main checkout excluded) with the branch, folder, and badges: `open` (a space shows it), `uncommitted`, `locked`, `merged` (branch is an ancestor of `<remote>/<base>`) or `unmerged`. Enter or a click ticks the highlighted row; m (or Tick merged) ticks every merged, clean, unlocked one, and again unticks them; r (or the Remove button, labelled with the count) asks for confirmation and the second press removes the ticked ones with `git worktree remove` (never `--force`, so dirty ones are refused and reported). A merged branch is then deleted with `git branch -d`; an unmerged one is kept. The space showing a removed worktree is closed with `space.close`.
+- **Space name and repo space** (worktree modes only): the new worktree's space is named from `worktree.spaceName` (variables `{name}` the project's display name, `{branch}`, `{slug}`, `{user}`, `{date}`, `{repo}`; an empty result falls back to `<name> · <branch>`). When `worktree.repoSpace` is on and no space shows the project's main checkout, a plain-shell space named after the project is opened on it first, then the worktree space, which herdr nests under it. If the repo's space is already open nothing extra is created.
 - **Delete** (the button or **d**) shows "Remove \"<name>\" from the list?" in red; pressing d or clicking Delete again removes the project from `project-presets.json`, any other key cancels. The folder and its worktrees are left alone. The editor's Delete button has its own two-click confirmation.
 - Selecting a project records it in shared state `project-presets.recent` for ordering.
 
@@ -42,7 +43,8 @@ The editor replaces the list in the same popup, in four sections chosen by butto
 { "projects": [{
   "name": "API", "path": "~/code/api", "group": "work", "pinned": true,
   "worktree": { "mode": "ask|always|never", "branchTemplate": "{user}/{date}-{slug}",
-                "root": "~/.herdr/worktrees/{repo}/{branch}" },
+                "root": "~/.herdr/worktrees/{repo}/{branch}",
+                "spaceName": "{name} · {branch}", "repoSpace": false },
   "git": { "fetch": true, "remote": "origin", "base": "main", "fastForward": false },
   "startup": { "agent": "claude", "args": "--model opus", "prompt": "", "promptMode": "arg|send",
                "setup": ["npm ci"], "tabs": ["lazygit"] }
@@ -64,6 +66,7 @@ The editor replaces the list in the same popup, in four sections chosen by butto
 - A failed setup command stops the remaining ones but the space still opens.
 - The first prompt goes to the agent as a command-line argument (`space.new {task}`) by default, which `hermes` and some other agents reject as an unknown subcommand. The Prompt button switches the project to "typed after start": the agent is started bare and the prompt is sent with `hc send` once `hc ls --json` shows it idle (6 s after start if it never reports a status, never while blocked). Picking the Hermes agent button sets this automatically.
 - The agent command and its arguments are split into words, with '…' and "…" keeping spaces together; there's no other shell syntax. The first prompt is only sent when an agent is set.
+- Herdr nests a worktree space under its repo's space only while a space on the main checkout is open (its sidebar groups by git common dir). With `repoSpace` off and no such space open, worktree spaces sit at the top level. Closing the repo's space later makes its worktrees top-level again.
 - Extra tabs rely on the new space being the focused one right after `space.new`; the terminal for a typed prompt is found as the new live terminal that starts in the new folder, so two launches into one folder at once could confuse it.
 - Local folders only: no `machine` field yet.
 - Click handling and `cmd` shortcuts on macOS are untested: Herdr may use some cmd keys itself (e.g. cmd-n), so the buttons are the fallback.
@@ -79,6 +82,7 @@ The editor replaces the list in the same popup, in four sections chosen by butto
 - Selecting the same project again with `always` gives `…-2`, not an error.
 - Worktrees → m → r twice (with alt, ctrl or cmd held) removes merged, clean worktrees and their branches, closes their spaces, and refuses one with uncommitted changes.
 - Delete asks once, then removes the project from the file.
+- With "Open the repo's space first" on, opening a worktree for a project with no open space creates a space named after the project and, under it, the worktree space; with the worktree's Space name set to `{slug}` the nested row shows only the slug. Opening a second worktree creates no second repo space.
 - With mode `never`, Enter focuses an already-open space instead of making another.
 - With 15 or more projects the list scrolls with the wheel and a scrollbar, the arrow keys keep the highlight in view, a single click only highlights, and a double-click opens.
 - The editor's four section buttons switch between Project, Worktree, Git and Startup; Save writes every section's fields.

@@ -69,7 +69,13 @@ export function blankProject(path = "") {
     path,
     group: "",
     pinned: false,
-    worktree: { mode: "ask", branchTemplate: "{user}/{date}-{slug}", root: "~/.herdr/worktrees/{repo}/{branch}" },
+    worktree: {
+      mode: "ask",
+      branchTemplate: "{user}/{date}-{slug}",
+      root: "~/.herdr/worktrees/{repo}/{branch}",
+      spaceName: "{name} · {branch}",
+      repoSpace: false,
+    },
     git: { fetch: true, remote: "origin", base: "main", fastForward: false },
     startup: { agent: "", args: "", prompt: "", promptMode: "arg", setup: [], tabs: [] },
   };

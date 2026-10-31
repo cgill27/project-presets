@@ -36,6 +36,15 @@ When it finishes you land in a new space on the new worktree, with the agent alr
 
 ![The result: a new space on cgill27/2026-10-30-add-search-page with Claude Code running and the first prompt answered](docs/screenshots/15-result.png)
 
+### Keeping the sidebar tidy
+
+Herdr nests a worktree's space under its repository's own space, but only while the repo's space is open. Two settings in a project's **Worktree** section control how that looks:
+
+- **Open the repo's space first:** when you open a worktree and the project's main checkout isn't open as a space, the mod opens it first (a plain shell, no agent). The new worktree space then nests under it, so each project is one row with its worktrees beneath it. Off by default.
+- **Space name:** a template for the worktree space's name. The default `{name} · {branch}` gives `Docs Site · cgill27/2026-10-30-add-search-page`; once nested, `{slug}` (just `add-search-page`) or `{branch}` is shorter and easier to read. You can use `{name}`, `{branch}`, `{slug}`, `{user}`, `{date}` and `{repo}`.
+
+![A worktree space nested under its repo's space, named by its slug](docs/screenshots/16-nested-worktree.png)
+
 ### Adding and editing a project
 
 Settings are split into four sections.
