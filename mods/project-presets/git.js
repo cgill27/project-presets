@@ -133,6 +133,14 @@ export async function runSetup(project, folder, log) {
   }
 }
 
+/** The folder with symlinks resolved, or itself when it can't be (gone, unreadable). */
+async function realPath(p) {
+  try {
+    const r = await exec("sh", ["-c", 'cd "$1" 2>/dev/null && pwd -P', "sh", p]);
+    return r.code === 0 && out(r) ? out(r) : p;
+  } catch { return p; }
+}
+
 export const findSpace = (project) => spaces().find((s) => !s.machine && s.folder === projectFolder(project));
 
 /** Opens the folder as a space, with the project's agent, first prompt and extra tabs. */
@@ -235,12 +243,21 @@ export async function listWorktrees(project) {
   let base = null;
   try { base = await baseRef(folder, project.git); } catch {}
   const open = spaces().filter((s) => !s.machine);
+  // git reports real paths; a space opened through a symlink (macOS /var, a linked home) has the other spelling.
+  const real = new Map();
+  const realOf = async (p) => real.get(p) ?? real.set(p, await realPath(p)).get(p);
+  const spaceAt = async (path) => {
+    const exact = open.find((s) => s.folder === path);
+    if (exact) return exact;
+    for (const s of open) if ((await realOf(s.folder)) === path) return s;
+    return null;
+  };
   const list = [];
   for (const { path, branch, locked, prunable } of found) {
     if (!path || prunable) continue;
     const dirty = out(await git(path, ["status", "--porcelain"])) !== "";
     const merged = Boolean(base && branch && (await git(folder, ["merge-base", "--is-ancestor", branch, base])).code === 0);
-    list.push({ path, branch, dirty, merged, locked, space: open.find((s) => s.folder === path) ?? null });
+    list.push({ path, branch, dirty, merged, locked, space: await spaceAt(path) });
   }
   return list;
 }

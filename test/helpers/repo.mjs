@@ -1,12 +1,20 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export const sh = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 
 /** A scratch directory that is not a repo. */
-export const scratch = (name = "pp") => mkdtempSync(join(tmpdir(), `${name}-`));
+// Resolved: macOS reaches its temp folder through a symlink, and git reports the real path.
+export const scratch = (name = "pp") => realpathSync(mkdtempSync(join(tmpdir(), `${name}-`)));
+
+/** A second spelling of `dir`, through a symlink. */
+export function symlinkTo(dir) {
+  const link = join(scratch("pp-link"), "via");
+  symlinkSync(dir, link);
+  return link;
+}
 
 /** A repo with one commit on main and a configured user. */
 export function makeRepo({ name = "Test User", email = "test@example.com", dir = scratch("pp-repo") } = {}) {

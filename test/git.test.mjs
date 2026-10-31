@@ -3,7 +3,7 @@ import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { makeRepo, makeClone, commit, scratch, sh } from "./helpers/repo.mjs";
+import { makeRepo, makeClone, commit, scratch, sh, symlinkTo } from "./helpers/repo.mjs";
 
 const { state, reset } = await import("./helpers/herdr-stub.mjs");
 const G = await import("../mods/project-presets/git.js");
@@ -353,6 +353,14 @@ test("listWorktrees reports branch, dirty, merged and the open space", async () 
   assert.equal(by["ada/dirty"].dirty, true);
   assert.equal(by["ada/ahead"].merged, false);
   assert.equal(by["ada/ahead"].locked, false);
+});
+
+test("listWorktrees finds the open space even when it was opened through a symlink", async () => {
+  const p = project(makeRepo({ name: "Ada" }));
+  const wt = await G.createWorktree(p, "linked", note);
+  state.spaces = [{ id: "sp-link", folder: symlinkTo(wt.folder), machine: null }];
+  const [item] = await G.listWorktrees(p);
+  assert.equal(item.space?.id, "sp-link");
 });
 
 test("listWorktrees skips prunable worktrees whose folder is gone", async () => {
