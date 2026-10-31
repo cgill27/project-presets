@@ -438,7 +438,7 @@ export default class ProjectPresets extends View {
         Object.assign(this.ranges[id], { start: range.start, end: range.end });
         return rows.slice(range.start, range.end).map((r, j) => render(r, range.start + j));
       }).track_scroll(handle).on_item_click(this.guard("row click", (key, cx) => onClick(key, cx))).size_full())
-      .child(Scrollbar.vertical(id).viewport_from_layout().absolute().inset_0());
+      .when(rows.length * ROW > height, (el) => el.child(Scrollbar.vertical(id).viewport_from_layout().absolute().inset_0()));
   }
 
   /** Scrolls only when row `at` is outside what is showing. */
