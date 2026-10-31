@@ -19,10 +19,12 @@ export const state = {
   sent: [],             // every `hc send <terminal> <text>`
   agentStatus: "idle",  // status given to a terminal created by space.new
   nextId: 1,
+  sendFails: false,
+  hangNextLs: false, // the next `hc ls` never answers
 };
 
 export function reset() {
-  Object.assign(state, { spaces: [], focused: null, terminals: [], foreground: "claude", runs: [], sent: [], agentStatus: "idle", nextId: 1, sendFails: false });
+  Object.assign(state, { spaces: [], focused: null, terminals: [], foreground: "claude", runs: [], sent: [], agentStatus: "idle", nextId: 1, sendFails: false, hangNextLs: false });
 }
 
 export const home = () => state.home;
@@ -55,6 +57,7 @@ export function run(command, args = {}) {
 
 export async function hc(args) {
   // The answer is read when hc is called and delivered later, like a real process: a slow `ls` shows old state.
+  if (state.hangNextLs && args[0] === "ls") { state.hangNextLs = false; return new Promise(() => {}); }
   const answer = hcNow(args);
   await new Promise((r) => setImmediate(r));
   return answer;

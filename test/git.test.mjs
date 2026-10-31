@@ -117,10 +117,12 @@ test("two simultaneous creates for the same name both succeed with different bra
   assert.ok(existsSync(a.folder) && existsSync(b.folder));
 });
 
-test("createWorktree gives up after 20 variants", async () => {
+test("createWorktree tries up to -21 and then gives up", async () => {
   const dir = makeRepo({ name: "Ada" });
   sh(dir, "branch", "ada/full");
-  for (let i = 2; i <= 21; i++) sh(dir, "branch", `ada/full-${i}`);
+  for (let i = 2; i <= 20; i++) sh(dir, "branch", `ada/full-${i}`);
+  const wt = await G.createWorktree(project(dir), "full", note);
+  assert.equal(wt.branch, "ada/full-21");
   await assert.rejects(G.createWorktree(project(dir), "full", note), /all taken/);
 });
 
@@ -300,6 +302,16 @@ test("two simultaneous send-mode launches into one folder each prompt their own 
   assert.equal(state.sent.length, 2);
   assert.notEqual(state.sent[0].terminal, state.sent[1].terminal);
   assert.deepEqual(state.sent.map((s) => s.text).sort(), ["first", "second"]);
+});
+
+test("a launch whose hc call hangs gives up its turn so later launches still run", async () => {
+  G.lockSettings.seconds = 0.3;
+  const mk = (prompt) => project("/r/api", { startup: { agent: "claude", prompt, promptMode: "send" } });
+  state.hangNextLs = true;
+  G.launch(mk("stuck"), "/r/api", "A").catch(() => {});
+  await G.launch(mk("next"), "/r/api", "B");
+  assert.deepEqual(state.sent.map((s) => s.text), ["next"]);
+  G.lockSettings.seconds = 25;
 });
 
 test("a worktree launch opens the repo's space first when asked and it is not open", async () => {

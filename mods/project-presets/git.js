@@ -94,8 +94,7 @@ export async function createWorktree(project, slugText, log) {
   const isTaken = async (branch, path) => (await git(folder, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).code === 0 || (await exists(path));
   // Another launch can take the name between the check and `worktree add`: when the add fails
   // and the name is now taken, move on to the next suffix instead of failing.
-  for (let n = 1; ; n++) {
-    if (n > 20) throw new Error(`Branch ${wanted} and its -N variants are all taken`);
+  for (let n = 1; n <= 21; n++) {
     const branch = n === 1 ? wanted : `${wanted}-${n}`;
     const path = expandHome(expand(w.root, { ...vars, branch }), home());
     if (await isTaken(branch, path)) continue;
@@ -105,6 +104,7 @@ export async function createWorktree(project, slugText, log) {
     if (await isTaken(branch, path)) continue;
     throw new Error(out({ stdout: r.stderr }) || "git worktree add failed");
   }
+  throw new Error(`Branch ${wanted} and its -N variants are all taken`);
 }
 
 /** The main checkout, brought up to date when fast-forward is on and that's safe. */
@@ -145,9 +145,12 @@ export function worktreeSpaceName(project, wt) {
 // Launches take turns creating their space: the new terminal is found as "new since a snapshot",
 // which two overlapping launches into one folder would otherwise mix up.
 let spaceLock = Promise.resolve();
+// A turn that hangs (hc not answering) gives up its place after this long so later launches still run.
+export const lockSettings = { seconds: 25 };
 const exclusive = (fn) => {
   const result = spaceLock.then(fn);
-  spaceLock = result.then(() => {}, () => {});
+  const done = result.then(() => {}, () => {});
+  spaceLock = Promise.race([done, sleep(lockSettings.seconds).then(() => {}, () => {})]);
   return result;
 };
 
