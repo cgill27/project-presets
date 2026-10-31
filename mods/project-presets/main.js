@@ -3,10 +3,11 @@
 // buttons (or alt/ctrl/cmd + n, e, w, d), Esc to leave.
 
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
 import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, notify, home } from "herdr";
 import { loadConfig, saveConfig } from "./config.js";
 import { inspect, projectFolder, previewBranch, createWorktree, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch } from "./git.js";
+import { readDemo } from "./demo.js";
 import { initLog, log, logError } from "./log.js";
 import { fuzzy, blankProject, shortHome, splitList, joinList, basename } from "./lib.js";
 
@@ -15,6 +16,15 @@ const RECENT = "project-presets.recent";
 const mac = () => window()?.platform === "macos";
 const key = (letter, other = "alt") => (mac() ? `⌘${letter.toUpperCase()}` : `${other}+${letter}`);
 
+const ROW = 48;
+// Editor sections and the text fields each one shows.
+const SECTIONS = [["project", "Project"], ["worktree", "Worktree"], ["git", "Git"], ["startup", "Startup"]];
+const SECTION_FIELDS = {
+  project: ["name", "path", "group"],
+  worktree: ["branchTemplate", "root"],
+  git: ["remote", "base"],
+  startup: ["agent", "args", "prompt", "setup", "tabs"],
+};
 const MODES = ["ask", "always", "never"];
 const MODE_HELP = { ask: "ask for a branch name", always: "always a new worktree", never: "open the checkout" };
 
@@ -37,6 +47,9 @@ const TEXT = [
 export default class ProjectPresets extends View {
   init(_props, cx) {
     this.cx = cx;
+    this.scroll = VirtualListScrollHandle.new();
+    this.wtScroll = VirtualListScrollHandle.new();
+    this.ranges = {};
     this.overlay = props()?.overlay;
     this.projects = [];
     this.raw = null;
@@ -55,7 +68,7 @@ export default class ProjectPresets extends View {
     this.agents = [];
     knownAgents().then((a) => { this.agents = a.filter((x) => x.installed); cx.notify(); }).catch((e) => logError("knownAgents", e));
     initLog();
-    this.reload(cx);
+    this.reload(cx, async () => { const d = await readDemo(); if (d) this.applyDemo(d); });
   }
 
   /** Wraps a handler: an exception is logged and shown in the popup instead of vanishing. */
@@ -76,7 +89,7 @@ export default class ProjectPresets extends View {
     this.cx?.notify();
   }
 
-  reload(cx) {
+  reload(cx, after) {
     cx.spawn(async (cx) => {
       try {
         const c = await loadConfig();
@@ -86,8 +99,37 @@ export default class ProjectPresets extends View {
         logError("load config", e);
         this.error = e.message;
       }
+      if (after) await after();
       cx.notify();
     });
+  }
+
+  /** Puts the picker in the view a demo file names (see demo.js). */
+  applyDemo(d) {
+    const project = this.projects.find((p) => p.name === d.project);
+    if (d.query != null) this.search.set_value(d.query);
+    const at = () => { const i = this.rows().findIndex((r) => r.p === project); this.at = Math.max(0, i); };
+    if (d.select != null) this.at = d.select;
+    else if (project) at();
+    if (d.scrollTo != null) this.cx.timer.after(600, () => { this.scroll.scroll_to_item(d.scrollTo, "top"); this.cx.notify(); });
+    if (d.view === "edit") {
+      this.edit(project ?? blankProject(), project ? this.projects.indexOf(project) : null);
+      if (d.section) this.showSection(d.section);
+      if (d.focus) this.fields.find(([k]) => k === d.focus)?.[1].focus();
+    } else if (d.view === "delete") this.pendingDelete = project;
+    else if (d.view === "name") {
+      this.target = project;
+      this.askName(project);
+      this.nameInput.set_value(d.text ?? "");
+      this.cx.timer.after(600, () => this.refreshPreview(this.cx));
+    } else if (d.view === "worktrees") {
+      this.afterWt = () => { if (d.tick) this.selectMerged(); if (d.confirm) this.wtConfirm = true; };
+      this.openWorktrees();
+    } else if (d.view === "busy") {
+      this.target = project;
+      this.mode = "busy";
+      this.notes = d.notes ?? [];
+    }
   }
 
   close() { closeOverlay(this.overlay); }
@@ -195,7 +237,16 @@ export default class ProjectPresets extends View {
       s.on("focus", () => (this.field = key));
       return [key, s];
     });
+    this.section = "project";
     this.fields[0][1].focus();
+  }
+
+  showSection(id) {
+    this.section = id;
+    this.field = SECTION_FIELDS[id][0];
+    const state = this.fields.find(([k]) => k === this.field)[1];
+    this.cx.timer.after(80, () => state.focus()); // once its input is on screen
+    this.cx.notify();
   }
 
   async browse(cx) {
@@ -241,8 +292,10 @@ export default class ProjectPresets extends View {
   }
 
   focusNextField(back) {
-    const i = this.fields.findIndex(([k]) => k === this.field);
-    this.fields[(i + (back ? -1 : 1) + this.fields.length) % this.fields.length][1].focus();
+    const keys = SECTION_FIELDS[this.section];
+    const i = keys.indexOf(this.field);
+    this.field = keys[(i + (back ? -1 : 1) + keys.length) % keys.length];
+    this.fields.find(([k]) => k === this.field)[1].focus();
   }
 
   editSelected() {
@@ -284,6 +337,8 @@ export default class ProjectPresets extends View {
   loadWorktrees() {
     this.cx.spawn(async (cx) => {
       try { this.wts = await listWorktrees(this.target); } catch (e) { this.wts = []; logError("list worktrees", e); this.error = e.message; }
+      this.afterWt?.();
+      this.afterWt = null;
       cx.notify();
     });
   }
@@ -339,8 +394,8 @@ export default class ProjectPresets extends View {
       else { this.mode = "list"; this.error = null; this.search.focus(); }
     } else if (this.mode === "list") {
       const n = this.rows().length;
-      if (k === "down" && n) this.at = (this.at + 1) % n;
-      else if (k === "up" && n) this.at = (this.at + n - 1) % n;
+      if (k === "down" && n) { this.at = (this.at + 1) % n; this.reveal("pp-projects", this.scroll, this.at); }
+      else if (k === "up" && n) { this.at = (this.at + n - 1) % n; this.reveal("pp-projects", this.scroll, this.at); }
       else if (k === "enter" && e.modifiers.shift) { this.handled = Date.now(); this.activate(true); }
       else if (k === "d" && mod) this.deleteSelected();
       else if (k === "w" && mod) this.openWorktrees();
@@ -349,8 +404,8 @@ export default class ProjectPresets extends View {
       else return;
     } else if (this.mode === "worktrees") {
       const n = this.wtRows().length;
-      if (k === "down" && n) this.wtAt = (this.wtAt + 1) % n;
-      else if (k === "up" && n) this.wtAt = (this.wtAt + n - 1) % n;
+      if (k === "down" && n) { this.wtAt = (this.wtAt + 1) % n; this.reveal("pp-worktrees", this.wtScroll, this.wtAt); }
+      else if (k === "up" && n) { this.wtAt = (this.wtAt + n - 1) % n; this.reveal("pp-worktrees", this.wtScroll, this.wtAt); }
       else if (k === "enter") { this.handled = Date.now(); this.toggleWt(); }
       else if (k === "m" && mod) this.selectMerged();
       else if (k === "r" && mod) this.removeSelected();
@@ -373,6 +428,26 @@ export default class ProjectPresets extends View {
       .child(body);
   }
 
+  /** A scrolling list of 48px rows: wheel and scrollbar work, and `reveal` keeps the highlight in view. */
+  vlist(id, rows, render, handle, max, keyOf, onClick) {
+    const height = Math.min(max, rows.length * ROW);
+    this.ranges[id] = { ...(this.ranges[id] ?? { start: 0, end: 0 }), visible: Math.max(1, Math.floor(height / ROW)) };
+    return div().relative().flex_none().w_full().h(height).min_h(0)
+      .child(v_virtual_list(id, rows.length, ROW, (i) => keyOf(rows[i], i), (range) => {
+        Object.assign(this.ranges[id], { start: range.start, end: range.end });
+        return rows.slice(range.start, range.end).map((r, j) => render(r, range.start + j));
+      }).track_scroll(handle).on_item_click(this.guard("row click", (key, cx) => onClick(key, cx))).size_full())
+      .child(Scrollbar.vertical(id).viewport_from_layout().absolute().inset_0());
+  }
+
+  /** Scrolls only when row `at` is outside what is showing. */
+  reveal(id, handle, at) {
+    const r = this.ranges[id];
+    if (!r) return;
+    if (at < r.start) handle.scroll_to_item(at, "top");
+    else if (at >= r.start + r.visible) handle.scroll_to_item(Math.max(0, at - r.visible + 1), "top");
+  }
+
   button(t, id, text, primary, action) {
     return h_flex().id(id).h(32).px(14).items_center().rounded(8).border_1()
       .border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
@@ -388,12 +463,12 @@ export default class ProjectPresets extends View {
   renderList(t, cx) {
     const rows = this.rows();
     if (this.at >= rows.length) this.at = Math.max(0, rows.length - 1);
+    const projectKey = (r) => `${r.p.name}\u0000${r.p.path}`;
     const row = (r, i) => {
       const on = i === this.at;
       const mode = r.p.worktree.mode;
       return h_flex().id(`pp-${i}`).w_full().h(48).flex_none().overflow_hidden().px(12).gap(10).items_center().rounded(8).cursor_pointer()
-        .bg(on ? t.selected : "transparent")
-        .on_click(this.guard("row click", () => { log("debug", "click row", { i }); this.at = i; this.activate(false); }))
+        .when(on, (el) => el.bg(t.selected))
         .child(div().w(10).flex_none().text_color(r.space ? (t[r.space.status] ?? t.done) : t.dim).child(r.space ? "●" : r.p.pinned ? "★" : "·"))
         .child(v_flex().flex_1().min_w(0)
           .child(div().text_color(t.foreground).font_medium().child(r.p.name))
@@ -406,10 +481,18 @@ export default class ProjectPresets extends View {
       .child(h_flex().h(36).flex_none().px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.search).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .child(this.error ? div().text_size(12).text_color(t.blocked).child(this.error) : div())
-      .child(v_flex().min_h(0).h(Math.min(380, 8 + rows.length * 48)).overflow_y_scrollbar().children(rows.map(row)))
+      .child(this.vlist("pp-projects", rows, row, this.scroll, 380, projectKey, (key, cx) => {
+        const i = rows.findIndex((r) => projectKey(r) === key);
+        if (i < 0) return;
+        const double = this.lastClick?.key === key && Date.now() - this.lastClick.at < 450;
+        this.lastClick = { key, at: Date.now() };
+        log("debug", "click row", { i, double });
+        this.at = i;
+        if (double) this.activate(false); else cx.notify();
+      }))
       .when(!rows.length, (el) => el.child(div().py(14).text_color(t.dim).child(this.projects.length ? "No project matches." : "No projects yet. Click Add project below a git checkout.")))
       .when(Boolean(this.pendingDelete), (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove "${this.pendingDelete.name}" from the list? Press ${key("d")} again or click Delete. The folder and its worktrees stay.`)))
-      .child(div().text_size(11).text_color(t.dim).child(`Enter open · Shift+Enter checkout · ${key("n")} add · ${key("e")} edit · ${key("w")} worktrees · ${key("d")} delete`))
+      .child(div().text_size(11).text_color(t.dim).child(`Click selects, double-click or Enter opens · Shift+Enter checkout · ${key("n")} add · ${key("e")} edit · ${key("w")} worktrees · ${key("d")} delete`))
       .child(h_flex().gap(8).items_center().justify_end()
         .when(rows.length > 0, (el) => el.child(this.button(t, "pp-wt", "Worktrees", false, () => { this.openWorktrees(); cx.notify(); }))
           .child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); }))
@@ -422,8 +505,7 @@ export default class ProjectPresets extends View {
     if (this.wtAt >= rows.length) this.wtAt = Math.max(0, rows.length - 1);
     const count = this.wtSel.size;
     const row = (w, i) => h_flex().id(`pp-wt-${i}`).w_full().h(48).flex_none().overflow_hidden().px(12).gap(10).items_center().rounded(8).cursor_pointer()
-      .bg(i === this.wtAt ? t.selected : "transparent")
-      .on_click(this.guard("worktree click", () => { this.wtAt = i; this.toggleWt(); cx.notify(); }))
+      .when(i === this.wtAt, (el) => el.bg(t.selected))
       .child(div().w(14).flex_none().text_color(this.wtSel.has(w.path) ? t.accent : t.dim).child(this.wtSel.has(w.path) ? "☑" : "☐"))
       .child(v_flex().flex_1().min_w(0)
         .child(div().text_color(t.foreground).font_medium().truncate().child(w.branch ?? "(detached)"))
@@ -437,7 +519,13 @@ export default class ProjectPresets extends View {
       .child(h_flex().h(36).flex_none().px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.wtSearch).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.error)))
-      .child(v_flex().min_h(0).h(Math.min(340, 8 + rows.length * 48)).overflow_y_scrollbar().children(rows.map(row)))
+      .child(this.vlist("pp-worktrees", rows, row, this.wtScroll, 340, (w) => w.path, (key, cx) => {
+        const i = rows.findIndex((w) => w.path === key);
+        if (i < 0) return;
+        this.wtAt = i;
+        this.toggleWt();
+        cx.notify();
+      }))
       .when(this.wts === null, (el) => el.child(div().py(14).text_color(t.dim).child("Looking at worktrees…")))
       .when(this.wts !== null && !rows.length, (el) => el.child(div().py(14).text_color(t.dim).child(this.wts.length ? "No worktree matches." : "No worktrees besides the main checkout.")))
       .when(this.wtConfirm, (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove ${count} worktree${count > 1 ? "s" : ""}${[...(this.wts ?? [])].some((w) => this.wtSel.has(w.path) && w.space) ? ", and close their spaces" : ""}? Merged branches are deleted too. Press ${key("r")} again or click.`)))
@@ -478,40 +566,48 @@ export default class ProjectPresets extends View {
     const agentState = () => this.fields.find(([k]) => k === "agent")[1];
     const chip = (id, text, value) => this.button(t, id, text, agentState().value().trim() === value, () => { agentState().set_value(value); this.draft.startup.promptMode = /^hermes\b/.test(value) ? "send" : "arg"; cx.notify(); });
     const toggle = (id, text, value, set) => this.button(t, id, `${value ? "✓" : "○"} ${text}`, false, () => { set(!value); cx.notify(); });
-    const section = (text) => div().pt(16).text_size(11).font_semibold().text_color(t.dim).child(text.toUpperCase());
+    const sections = {
+      project: () => [
+        field("name"),
+        field("path"),
+        h_flex().pt(6).gap(8).child(this.button(t, "pp-browse", "Browse…", false, () => this.browse(cx))),
+        field("group"),
+        h_flex().pt(10).child(toggle("pp-pin", "Pin to top", d.pinned, (v) => (d.pinned = v))),
+      ],
+      worktree: () => [
+        h_flex().pt(10).gap(8).items_center()
+          .child(this.button(t, "pp-mode", `Worktree: ${d.worktree.mode}`, false, () => { d.worktree.mode = MODES[(MODES.indexOf(d.worktree.mode) + 1) % MODES.length]; cx.notify(); }))
+          .child(div().text_size(11.5).text_color(t.dim).child(MODE_HELP[d.worktree.mode])),
+        field("branchTemplate"),
+        field("root"),
+      ],
+      git: () => [
+        h_flex().pt(10).gap(8)
+          .child(toggle("pp-fetch", "Fetch first", d.git.fetch, (v) => (d.git.fetch = v)))
+          .child(toggle("pp-ff", "Fast-forward checkout", d.git.fastForward, (v) => (d.git.fastForward = v))),
+        field("remote"),
+        field("base"),
+      ],
+      startup: () => [
+        label("Agent"),
+        h_flex().flex_wrap().gap(6)
+          .child(chip("pp-agent-shell", "Shell", ""))
+          .children(this.agents.map((a, i) => chip(`pp-agent-${i}`, a.name, a.run.join(" ")))),
+        field("agent"),
+        field("args"),
+        field("prompt"),
+        h_flex().pt(8).gap(8).items_center()
+          .child(this.button(t, "pp-pmode", `Prompt: ${d.startup.promptMode === "send" ? "typed after start" : "command-line argument"}`, false, () => { d.startup.promptMode = d.startup.promptMode === "send" ? "arg" : "send"; cx.notify(); }))
+          .child(div().text_size(11.5).text_color(t.dim).child(d.startup.promptMode === "send" ? "for agents that reject a prompt argument" : "claude and most agents")),
+        field("setup"),
+        field("tabs"),
+      ],
+    };
     return v_flex().gap(0).min_h(0)
       .child(this.title(t, this.index == null ? "Add project" : "Edit project", `Tab next field · ${key("s", "ctrl")} save · Esc back`))
-      .child(v_flex().min_h(0).h(460).overflow_y_scrollbar().pr(8)
-        .child(field("name"))
-        .child(field("path"))
-        .child(h_flex().pt(6).gap(8).child(this.button(t, "pp-browse", "Browse…", false, () => this.browse(cx))))
-        .child(field("group"))
-        .child(h_flex().pt(8).child(toggle("pp-pin", "Pin to top", d.pinned, (v) => (d.pinned = v))))
-        .child(section("When selected"))
-        .child(h_flex().pt(8).gap(8).items_center()
-          .child(this.button(t, "pp-mode", `Worktree: ${d.worktree.mode}`, false, () => { d.worktree.mode = MODES[(MODES.indexOf(d.worktree.mode) + 1) % MODES.length]; cx.notify(); }))
-          .child(div().text_size(11.5).text_color(t.dim).child(MODE_HELP[d.worktree.mode])))
-        .child(field("branchTemplate"))
-        .child(field("root"))
-        .child(section("Git"))
-        .child(h_flex().pt(8).gap(8)
-          .child(toggle("pp-fetch", "Fetch first", d.git.fetch, (v) => (d.git.fetch = v)))
-          .child(toggle("pp-ff", "Fast-forward checkout", d.git.fastForward, (v) => (d.git.fastForward = v))))
-        .child(field("remote"))
-        .child(field("base"))
-        .child(section("Startup"))
-        .child(label("Agent"))
-        .child(h_flex().flex_wrap().gap(6)
-          .child(chip("pp-agent-shell", "Shell", "", ""))
-          .children(this.agents.map((a, i) => chip(`pp-agent-${i}`, a.name, a.run.join(" "), a.run.join(" ")))))
-        .child(field("agent"))
-        .child(field("args"))
-        .child(field("prompt"))
-        .child(h_flex().pt(8).gap(8).items_center()
-          .child(this.button(t, "pp-pmode", `Prompt: ${d.startup.promptMode === "send" ? "typed after start" : "command-line argument"}`, false, () => { d.startup.promptMode = d.startup.promptMode === "send" ? "arg" : "send"; cx.notify(); }))
-          .child(div().text_size(11.5).text_color(t.dim).child(d.startup.promptMode === "send" ? "for agents that reject a prompt argument" : "claude and most agents")))
-        .child(field("setup"))
-        .child(field("tabs")))
+      .child(h_flex().pt(10).gap(6)
+        .children(SECTIONS.map(([id, name]) => this.button(t, `pp-sec-${id}`, name, this.section === id, () => this.showSection(id)))))
+      .child(v_flex().min_h(0).h(430).overflow_y_scrollbar().pr(8).children(sections[this.section]()))
       .child(this.error ? div().pt(8).text_size(12).text_color(t.blocked).child(this.error) : div())
       .child(h_flex().pt(12).gap(8).justify_end()
         .when(this.index != null, (el) => el.child(this.button(t, "pp-del", this.confirmDelete ? "Click again to delete" : "Delete", false, () => this.remove(cx))))

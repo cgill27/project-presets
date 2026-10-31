@@ -10,15 +10,16 @@ A popup, 680px wide, top-aligned 40px down, up to 80% of the window high, on the
 
 - Title "Projects" with "Esc" on the right.
 - A 36px search box with an `accent` border.
-- One 48px row per project: a marker (`●` in the agent-status color when the project's folder already has a space, `★` when pinned, else `·`), the name, the folder shortened with `~`, the group at the right, then `checkout`, `worktree?` or `worktree` for the project's mode.
+- One 48px row per project (a scrolling list with a scrollbar; the wheel and the arrow keys scroll): a marker (`●` in the agent-status color when the project's folder already has a space, `★` when pinned, else `·`), the name, the folder shortened with `~`, the group at the right, then `checkout`, `worktree?` or `worktree` for the project's mode.
 - A footer line of the keys.
 
 Ordering with an empty search: projects with an open space, pinned ones, recently used, then by name. With a query: best fuzzy match first (subsequence match on name, group and folder name; consecutive and word-start letters score higher).
 
-The editor replaces the list in the same popup: Name, Folder (+ Browse…), Group, Pin; Worktree mode (button cycling ask / always / never), Branch name, Worktree folder; Fetch first, Fast-forward checkout, Remote, Base branch; Agent (a button per installed agent from `knownAgents()`, plus Shell), Agent command, Agent arguments, First prompt, Setup commands, Extra tabs. Buttons: Delete (asks for a second click), Cancel, Save.
+The editor replaces the list in the same popup, in four sections chosen by buttons under the title. **Project:** Name, Folder (+ Browse…), Group, Pin to top. **Worktree:** the mode button (ask / always / never), Branch name, Worktree folder. **Git:** Fetch first, Fast-forward checkout, Remote, Base branch. **Startup:** an Agent button per installed agent from `knownAgents()` plus Shell, Agent command, Agent arguments, First prompt with a Prompt delivery button, Setup commands, Extra tabs. Buttons: Delete (asks for a second click), Cancel, Save. Tab moves between the fields of the current section.
 
 ## How it behaves
 
+- A single click highlights a row; a double-click (two clicks within 450 ms) or **Enter** opens it, following the project's mode.
 - **Enter** on a project follows its mode.
   - `never`: focus the project's space if its folder already has one, otherwise fetch (if on), fast-forward (if on and safe), run setup, open a space on the checkout.
   - `always`: create a worktree and open a space on it. The `{slug}` part is the time (HHMMSS).

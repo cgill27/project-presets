@@ -4,6 +4,56 @@ A [Herdr](https://herdr.dev) app mod: a project picker where each project is a l
 
 ![Project presets](preview.png)
 
+## Screens
+
+Every view of the popup. The projects shown are demo data.
+
+### Project list
+
+Type to filter; the match is fuzzy and covers the name, the group and the folder name. Open spaces come first, then pinned projects (★), then recent ones. Each row ends with what Enter will do: `worktree` (always a new one), `worktree?` (asks for a branch name) or `checkout` (opens the folder itself). Scroll with the wheel or the arrow keys.
+
+![Project list](docs/screenshots/01-project-list.png)
+
+| Search by name (`apgw`) | Search by group (`pers`) |
+|---|---|
+| ![Search by name](docs/screenshots/02-search-name.png) | ![Search by group](docs/screenshots/03-search-group.png) |
+
+### Removing a project
+
+Delete asks once, then removes the project from the list. Its folder and worktrees stay.
+
+![Delete confirmation](docs/screenshots/04-delete-confirm.png)
+
+### Opening a project
+
+A project in `ask` mode asks for a name and shows the branch it will create before you press Enter. While it works the popup lists each step, then closes.
+
+| Branch name | Starting |
+|---|---|
+| ![Branch name](docs/screenshots/05-branch-name.png) | ![Starting](docs/screenshots/06-starting.png) |
+
+### Adding and editing a project
+
+Settings are split into four sections.
+
+| Project | Worktree |
+|---|---|
+| ![Editor, project](docs/screenshots/07-editor-project.png) | ![Editor, worktree](docs/screenshots/08-editor-worktree.png) |
+| **Git** | **Startup** |
+| ![Editor, git](docs/screenshots/09-editor-git.png) | ![Editor, startup](docs/screenshots/10-editor-startup.png) |
+
+**Add project** opens the same editor with empty fields; Browse… picks the folder.
+
+![Add project](docs/screenshots/11-add-project.png)
+
+### Cleaning up worktrees
+
+Worktrees lists a project's linked worktrees with whether each is merged into the base branch, has uncommitted changes, or is open in a space. Tick the ones to remove, or Tick merged for every merged, clean one. Removing asks once more. Worktrees with uncommitted changes are never removed, and a branch is deleted only when it is merged.
+
+| List | Merged ticked | Confirm |
+|---|---|---|
+| ![Worktrees](docs/screenshots/12-worktrees.png) | ![Ticked](docs/screenshots/13-worktrees-ticked.png) | ![Confirm](docs/screenshots/14-worktrees-confirm.png) |
+
 ## Install
 
 Copy `mods/project-presets/` to `~/.config/herdr-app/mods/` and merge `keys.json` into `~/.config/herdr-app/keys.json`. It binds `ctrl-alt-p` for Linux and Windows and `cmd-p` for macOS; change either to any key you like, since the key lives in your own `keys.json`, not in the mod. Inside the picker the shortcuts (add, edit, worktrees, delete) take alt, ctrl or cmd, and every one has a button too. Or ask your agent to install it from this repo; `RECIPE.md` describes the whole mod.

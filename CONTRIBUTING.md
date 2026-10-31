@@ -54,6 +54,10 @@ Use a throwaway git repo as your test project so you don't create worktrees in r
 4. Add a test in `test/` when you change `lib.js`. Logic that needs `herdr` (`git.js`, `main.js`) can't run under plain node, so describe how you tried it in the pull request.
 5. If behaviour changes, update `RECIPE.md` (and `README.md` if it is user-facing), including the "Done when" checks.
 
+## Screenshots
+
+To capture a view for the docs, create `~/.config/herdr-app/data/project-presets.demo` containing JSON, then reopen the picker (`herdr-app do mod.open '{"name":"project-presets"}'`) and take `herdr-app shot`. The file opens the picker already in a view: `{ "view": "list|edit|delete|name|worktrees|busy", "project": "<name>", "query": "…", "section": "project|worktree|git|startup", "text": "…", "tick": true, "confirm": true, "notes": ["…"] }`. Delete the file afterwards. Use demo projects rather than your own, and keep private repository names out of the images.
+
 ## Code conventions
 
 - Match the style of the surrounding code: 2-space indent, double quotes, semicolons, ES modules.
