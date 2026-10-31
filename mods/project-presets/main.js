@@ -284,8 +284,18 @@ export default class ProjectPresets extends View {
   refreshPreview(cx) {
     const p = this.target;
     const text = this.nameInput.value();
+    // Answers can come back out of order: only the latest request may set the preview.
+    const seq = (this.previewSeq = (this.previewSeq ?? 0) + 1);
     cx?.spawn(async (cx) => {
-      try { this.preview = await previewBranch(p, text); this.error = null; } catch (e) { this.error = e.message; }
+      try {
+        const branch = await previewBranch(p, text);
+        if (seq !== this.previewSeq) return;
+        this.preview = branch;
+        this.error = null;
+      } catch (e) {
+        if (seq !== this.previewSeq) return;
+        this.error = e.message;
+      }
       cx.notify();
     });
     cx?.notify();

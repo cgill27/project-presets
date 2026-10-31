@@ -767,3 +767,32 @@ test("a color name the sidebar palette lacks falls back to the theme, then to te
   setShared("space.colors", { s1: "ansi7" });
   assert.equal(avatarOf(rowOf(v, "alpha")).op("bg")[0], "#ansi7", "the theme's own color");
 });
+
+test("a slow preview for earlier input never overwrites the preview for the current input", async () => {
+  const dir = makeRepo({ name: "Ada" });
+  const { v, cx } = await open([proj("demo", dir, { worktree: { mode: "ask", branchTemplate: "{user}/{slug}" } })]);
+  enter(v);
+  // Hold the two requests back, then let the newer one answer first and the older one last.
+  const held = [];
+  const slow = { notify() {}, spawn: (fn) => { held.push(fn); } };
+  v.nameInput.set_value("first");
+  v.refreshPreview(slow);
+  v.nameInput.set_value("second");
+  v.refreshPreview(slow);
+  assert.equal(held.length, 2);
+  await held[1](cx);
+  assert.equal(v.preview, "ada/second");
+  await held[0](cx);
+  assert.equal(v.preview, "ada/second", "the older answer arrived last and was ignored");
+});
+
+test("a preview error from stale input does not replace the current preview", async () => {
+  const dir = makeRepo({ name: "Ada" });
+  const { v, cx } = await open([proj("demo", dir, { worktree: { mode: "ask", branchTemplate: "{user}/{slug}" } })]);
+  enter(v);
+  v.nameInput.set_value("fine");
+  v.refreshPreview(cx);
+  await cx.settle();
+  assert.equal(v.preview, "ada/fine");
+  assert.equal(v.error, null);
+});
