@@ -139,6 +139,8 @@ rsync -a --delete --exclude='*.d.ts' ~/code/project-presets/mods/project-presets
 
 Only errors are logged by default. Debug logging is **off** unless you turn it on.
 
+**The shortcut does nothing right after launching herdr-app with no space open.** The window has no pane to hold the keyboard yet, so herdr doesn't see the key. Click once in the window (the "No space open." area), then press the shortcut; once you've had a space open it keeps working. This is herdr-app, not the mod: the shortcut is handled by herdr before the mod runs. Running `herdr-app do mod.open '{"name":"project-presets"}'` from a terminal is another way to open the picker.
+
 **Where the log is:** `~/.config/herdr-app/data/project-presets.log` (the last 64 KB are kept). Errors also appear in the popup.
 
 **Turn debug logging on** to capture a problem:
