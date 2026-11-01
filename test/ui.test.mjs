@@ -923,3 +923,60 @@ test("Escape closes the popup through its overlay id, or by command when it has 
   assert.equal(state.closed, 0, "closeOverlay is not called with no id");
   assert.deepEqual(state.runs.filter((r) => r.command === "overlay.close"), [{ command: "overlay.close", args: {} }]);
 });
+
+// ---------------------------------------------------------------- keeping the highlight in view
+
+const twenty = () => Array.from({ length: 20 }, (_, i) => proj(`proj-${String(i + 1).padStart(2, "0")}`, `/r/p${i + 1}`, { pinned: i < 2 }));
+
+test("every arrow press asks herdr to bring the highlighted item into view: the item itself, header rows counted", async () => {
+  const { v, cx } = await open(twenty());
+  rendered(v);
+  v.scroll.calls.length = 0;
+  for (let i = 0; i < 12; i++) press(v, cx, "down");
+  // items: [header, p1, p2, header, p3 …]; the highlight starts on p1 (item 1)
+  assert.deepEqual(v.scroll.calls, [2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+  assert.equal(v.at, 12);
+});
+
+test("it never asks for an earlier item than the highlighted one (which herdr would find already on screen and not scroll)", async () => {
+  const { v, cx } = await open(twenty());
+  rendered(v);
+  v.scroll.calls.length = 0;
+  for (let i = 0; i < 15; i++) press(v, cx, "down");
+  const items = (await import("../mods/project-presets/lib.js")).listItems(v.rows(), false);
+  const shown = v.scroll.calls.map((c) => items[c]);
+  assert.ok(shown.every((it) => it.row), "always a row, never a header, going down");
+  assert.deepEqual(shown.map((it) => it.index), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+});
+
+test("going up into a section's first project above what shows brings the header with it", async () => {
+  const { v, cx } = await open(twenty());
+  rendered(v);
+  v.at = 2; // proj-03: the first row under "Everything else"
+  v.ranges["pp-projects"].start = 5; // the list is scrolled well below it
+  v.scroll.calls.length = 0;
+  v.revealRow();
+  assert.deepEqual(v.scroll.calls, [3], "the header, item 3, not the row at item 4");
+  v.ranges["pp-projects"].start = 0; // the row is below the top of what shows: just the row
+  v.scroll.calls.length = 0;
+  v.revealRow();
+  assert.deepEqual(v.scroll.calls, [4]);
+});
+
+test("a wrap from the last project to the first asks for the first", async () => {
+  const { v, cx } = await open(twenty());
+  rendered(v);
+  press(v, cx, "up");
+  assert.equal(v.at, 19);
+  v.scroll.calls.length = 0;
+  press(v, cx, "down");
+  assert.equal(v.at, 0);
+  assert.deepEqual(v.scroll.calls, [1]);
+});
+
+test("the worktree list scrolls with its highlight too", async () => {
+  const { v } = await open([proj("demo", "/r/demo")]);
+  v.wtScroll.calls.length = 0;
+  v.reveal("pp-worktrees", v.wtScroll, 9);
+  assert.deepEqual(v.wtScroll.calls, [9]);
+});

@@ -627,18 +627,21 @@ export default class ProjectPresets extends View {
       .when(total > height, (el) => el.child(Scrollbar.vertical(id).viewport_from_layout().absolute().inset_0()));
   }
 
-  /** Keeps the highlighted project in view (section headers count as list items). */
+  /** Keeps the highlighted project in view (section headers count as list items). When it is above what is showing and a
+   *  section header sits right over it, the header is brought into view instead, so the row comes with its header. */
   revealRow() {
-    const at = listItems(this.rows(), Boolean(this.query())).findIndex((it) => it.row && it.index === this.at);
-    if (at >= 0) this.reveal("pp-projects", this.scroll, at);
+    const items = listItems(this.rows(), Boolean(this.query()));
+    const at = items.findIndex((it) => it.row && it.index === this.at);
+    if (at < 0) return;
+    const r = this.ranges["pp-projects"];
+    this.reveal("pp-projects", this.scroll, r && at < r.start && items[at - 1]?.header ? at - 1 : at);
   }
 
-  /** Scrolls only when row `at` is outside what is showing. */
-  reveal(id, handle, at) {
-    const r = this.ranges[id];
-    if (!r) return;
-    if (at < r.start) handle.scroll_to_item(at, "top");
-    else if (at >= r.start + r.visible) handle.scroll_to_item(Math.max(0, at - r.visible + 1), "top");
+  /** Brings list item `at` into view. herdr's scroll_to_item means "put this item on screen": it does nothing when the item
+   *  is already showing and scrolls just far enough when it is not. (Asking for an item that is already on screen, as the
+   *  old code did to land `at` at the bottom, scrolled nothing.) */
+  reveal(_id, handle, at) {
+    handle.scroll_to_item(at);
   }
 
   button(t, id, text, primary, action, lead = null) {
