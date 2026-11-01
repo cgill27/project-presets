@@ -3,7 +3,7 @@
 import "./helpers/setup.mjs";
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { makeRepo, scratch, sh } from "./helpers/repo.mjs";
 
@@ -1140,4 +1140,144 @@ test("searching finds the template by name, and the card still follows the highl
   v.search.set_value("templ");
   assert.deepEqual(rowNames(v), ["Template"]);
   assert.ok(texts(v).includes("Use template"));
+});
+
+// ---------------------------------------------------------------- backup and restore
+
+const click = (v, id) => findAll(rendered(v), (e) => e.op?.("id")?.[0] === id)[0].op("on_click")[0]();
+const backupPath = () => `${scratch("backup")}/backup.json`;
+const savedFile = () => JSON.parse(readFileSync(dataFile(), "utf8"));
+
+test("alt+x and the Import / export button open the screen, Back returns", async () => {
+  const { v, cx } = await open([proj("api", "/r/api")], undefined, {});
+  press(v, cx, "x", { alt: true });
+  assert.equal(v.mode, "backup");
+  const t = texts(v);
+  for (const s of ["Import and export config", "Export", "Import: merge", "Import: replace"]) assert.ok(t.includes(s), s);
+  assert.match(v.backupPath.value(), /^~\/Downloads\/project-presets-config-\d{4}-\d\d-\d\d-\d{6}\.json$/, "a dated name");
+  assert.ok(texts_noRefresh(v).length && !texts(v).includes("Backup"));
+  click(v, "pp-bk-back");
+  assert.equal(v.mode, "list");
+  click(v, "pp-backup");
+  assert.equal(v.mode, "backup");
+});
+
+test("Export writes the whole data file with portable paths, and asks before replacing a file", async () => {
+  const dir = `${state.home}/code/api`;
+  const file = backupPath();
+  const { v, cx } = await open([proj("api", dir, { pinned: true }), proj("ext", "/srv/ext")], [{ name: "dev", panes: [{ type: "agent" }] }], { gitInfo: false });
+  v.openBackup();
+  v.backupPath.set_value(file);
+  await v.exportBackup();
+  const out = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(out.format, "project-presets-backup");
+  assert.deepEqual(out.projects.map((p) => p.name), ["api", "ext"]);
+  assert.match(out.projects[0].path, /^~\//, "the home folder is written as ~");
+  assert.equal(out.projects[1].path, "/srv/ext");
+  assert.equal(out.projects[0].pinned, true);
+  assert.equal(out.gitInfo, false);
+  assert.deepEqual(out.layouts.map((l) => l.name), ["dev"]);
+  assert.match(v.backupNote.text, /Exported 2 project\(s\)/);
+  await v.exportBackup();
+  assert.match(v.backupNote.text, /already exists/);
+  assert.ok(v.backupNote.bad);
+  assert.equal(v.backupConfirm, "overwrite");
+  assert.ok(texts(v).includes("Click again to replace the file"));
+  await v.exportBackup();
+  assert.match(v.backupNote.text, /Exported/);
+});
+
+test("Export with nothing typed or an unwritable place says so", async () => {
+  const { v } = await open([proj("api", "/r/api")], undefined, {});
+  v.openBackup();
+  v.backupPath.set_value("  ");
+  await v.exportBackup();
+  assert.match(v.backupNote.text, /Type where to save the file/);
+});
+
+test("Import merge adds what is missing, keeps yours, and warns about folders this machine lacks", async () => {
+  const file = backupPath();
+  writeFileSync(file, JSON.stringify({ format: "project-presets-backup", version: 1, projects: [{ name: "api", path: "/r/api", startup: { agent: "codex" } }, { name: "blog", path: "/nope/blog" }], layouts: [{ name: "solo", panes: [{ type: "agent" }] }] }));
+  const { v } = await open([proj("api", "/r/api", { startup: { agent: "claude" } })], undefined, {});
+  v.openBackup();
+  v.backupPath.set_value(file);
+  await v.importBackup("merge");
+  assert.match(v.backupNote.text, /Merged: 1 project\(s\) added, 1 already here, 1 layout\(s\) added/);
+  assert.match(v.backupNote.text, /1 folder\(s\) don't exist on this machine: blog/);
+  assert.deepEqual(rowNames(v), ["api", "blog"]);
+  const saved = savedFile();
+  assert.deepEqual(saved.projects.map((p) => p.name), ["api", "blog"]);
+  assert.equal(saved.projects[0].startup.agent, "claude");
+  assert.deepEqual(saved.layouts.map((l) => l.name), ["solo"]);
+});
+
+test("Import replace needs a second click, saves a .bak first, and restores exactly the backup", async () => {
+  const file = backupPath();
+  writeFileSync(file, JSON.stringify({ projects: [{ name: "only", path: "/r/only" }], layouts: [], gitInfo: false, hideTemplate: true }));
+  const { v } = await open([proj("a", "/r/a"), proj("b", "/r/b")], undefined, {});
+  const before = readFileSync(dataFile(), "utf8");
+  v.openBackup();
+  v.backupPath.set_value(file);
+  await v.importBackup("replace");
+  assert.match(v.backupNote.text, /replaces your 2 project\(s\) with the file's 1/);
+  assert.equal(v.backupConfirm, "replace");
+  assert.ok(texts(v).includes("Click again to replace everything"));
+  assert.deepEqual(rowNames(v), ["a", "b"], "nothing changed yet");
+  await v.importBackup("replace");
+  assert.match(v.backupNote.text, /Replaced everything with the file: 1 project\(s\)/);
+  assert.deepEqual(rowNames(v), ["only"]);
+  assert.equal(readFileSync(`${dataFile()}.bak`, "utf8"), before, "the previous file is kept");
+  const saved = savedFile();
+  assert.deepEqual([saved.projects.map((p) => p.name), saved.gitInfo, saved.hideTemplate], [["only"], false, true]);
+  assert.equal(v.gitInfo, false);
+});
+
+test("typing in the file box cancels a pending confirmation", async () => {
+  const file = backupPath();
+  writeFileSync(file, JSON.stringify({ projects: [] }));
+  const { v } = await open([proj("a", "/r/a")], undefined, {});
+  v.openBackup();
+  v.backupPath.set_value(file);
+  await v.importBackup("replace");
+  assert.equal(v.backupConfirm, "replace");
+  v.backupPath.emit("change");
+  assert.equal(v.backupConfirm, null);
+  assert.deepEqual(rowNames(v), ["a"]);
+});
+
+test("Import reports a missing file, a file that is not JSON, and one that is not a backup, and changes nothing", async () => {
+  const dir = scratch("bad");
+  const { v } = await open([proj("a", "/r/a")], undefined, {});
+  rmSync(`${dataFile()}.bak`, { force: true }); // an earlier test's
+  const before = readFileSync(dataFile(), "utf8");
+  v.openBackup();
+  v.backupPath.set_value(`${dir}/missing.json`);
+  await v.importBackup("merge");
+  assert.match(v.backupNote.text, /There is no file at/);
+  writeFileSync(`${dir}/x.json`, "{ nope");
+  v.backupPath.set_value(`${dir}/x.json`);
+  await v.importBackup("merge");
+  assert.match(v.backupNote.text, /Import failed: That file is not valid JSON/);
+  writeFileSync(`${dir}/y.json`, JSON.stringify({ hello: 1 }));
+  v.backupPath.set_value(`${dir}/y.json`);
+  await v.importBackup("replace");
+  assert.match(v.backupNote.text, /Import failed: That file has no list of projects/);
+  assert.ok(v.backupNote.bad);
+  assert.equal(readFileSync(dataFile(), "utf8"), before);
+  assert.equal(existsSync(`${dataFile()}.bak`), false);
+});
+
+test("a backup exported here imports on a machine with another home folder", async () => {
+  const file = backupPath();
+  const dir = `${state.home}/code/api`;
+  const a = await open([proj("api", dir)], undefined, {});
+  a.v.openBackup();
+  a.v.backupPath.set_value(file);
+  await a.v.exportBackup();
+  const b = await open([], undefined, {});
+  b.v.openBackup();
+  b.v.backupPath.set_value(file);
+  await b.v.importBackup("merge");
+  assert.deepEqual(rowNames(b.v), ["api"]);
+  assert.match(savedFile().projects[0].path, /^~\//, "kept as ~, so it resolves under the new home");
 });

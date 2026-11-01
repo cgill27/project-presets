@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fuzzy, slug, expand, branchName, expandHome, splitList, normalize, splitArgs, basename, parseWorktrees, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, SPACE_MARK, defaultTemplate, uniqueName, duplicateProject, startFromTemplate, allLayouts, layoutPlan, nextLayout, inFolder, BUILTIN_LAYOUTS, dateStamp, timeStamp, shortHome, joinList, blankProject } from "../mods/project-presets/lib.js";
+import { fuzzy, slug, expand, branchName, expandHome, splitList, normalize, splitArgs, basename, parseWorktrees, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, SPACE_MARK, defaultTemplate, uniqueName, duplicateProject, startFromTemplate, portablePath, exportData, parseBackup, mergeProjects, mergeLayouts, BACKUP_FORMAT, exportFileName, allLayouts, layoutPlan, nextLayout, inFolder, BUILTIN_LAYOUTS, dateStamp, timeStamp, shortHome, joinList, blankProject } from "../mods/project-presets/lib.js";
 
 test("fuzzy matches subsequences and ranks tighter matches higher", () => {
   assert.equal(fuzzy("zzz", "herdr"), -1);
@@ -335,4 +335,74 @@ test("listItems puts the template in its own last section, never under Open now 
   ];
   assert.deepEqual(listItems(rows, false).map((i) => i.header ?? i.row.p.name), ["Everything else", "a", "Template", "Template"]);
   assert.deepEqual(listItems(rows.slice(1), false).map((i) => i.header ?? "row"), ["row"], "alone: no header");
+});
+
+test("portablePath writes the home folder as ~ and leaves other paths alone", () => {
+  assert.equal(portablePath("/home/me/code/api", "/home/me"), "~/code/api");
+  assert.equal(portablePath("/home/me", "/home/me/"), "~");
+  assert.equal(portablePath("/home/mexico/x", "/home/me"), "/home/mexico/x", "only at a folder boundary");
+  assert.equal(portablePath("/srv/api", "/home/me"), "/srv/api");
+  assert.equal(portablePath("~/already", "/home/me"), "~/already");
+  assert.equal(portablePath("", "/home/me"), "");
+  assert.equal(portablePath(undefined, "/home/me"), "");
+  assert.equal(portablePath("/home/me/x", ""), "/home/me/x");
+});
+
+test("exportData carries everything, with portable paths, and does not change its input", () => {
+  const projects = [normalize({ name: "api", path: "/home/me/code/api", worktree: { root: "/home/me/.herdr/worktrees/{repo}/{branch}" } }), normalize({ name: "ext", path: "/srv/ext" })];
+  const layouts = [{ name: "dev", panes: [{ type: "agent" }] }];
+  const out = exportData({ projects, layouts, gitInfo: false, hideTemplate: true }, "/home/me", new Date("2026-11-01T12:00:00Z"));
+  assert.deepEqual([out.format, out.version, out.exportedAt], [BACKUP_FORMAT, 1, "2026-11-01T12:00:00.000Z"]);
+  assert.deepEqual([out.gitInfo, out.hideTemplate], [false, true]);
+  assert.deepEqual(out.layouts, layouts);
+  assert.deepEqual(out.projects.map((p) => p.path), ["~/code/api", "/srv/ext"]);
+  assert.equal(out.projects[0].worktree.root, "~/.herdr/worktrees/{repo}/{branch}");
+  assert.equal(projects[0].path, "/home/me/code/api", "the originals keep their paths");
+  assert.deepEqual(exportData({}, "/h").projects, []);
+});
+
+test("parseBackup reads a backup and a plain data file, and says what is wrong with anything else", () => {
+  const data = { projects: [{ name: "api", path: "~/api", startup: { agent: "codex" } }], layouts: [{ name: "x", panes: [] }], gitInfo: false, hideTemplate: true };
+  for (const text of [JSON.stringify({ format: BACKUP_FORMAT, version: 1, ...data }), JSON.stringify(data)]) {
+    const b = parseBackup(text);
+    assert.equal(b.projects[0].startup.agent, "codex");
+    assert.equal(b.projects[0].git.base, "main", "missing settings are filled in");
+    assert.deepEqual([b.gitInfo, b.hideTemplate, b.layouts.length], [false, true, 1]);
+  }
+  assert.deepEqual(parseBackup('{"projects":[]}'), { projects: [], layouts: [], gitInfo: true, hideTemplate: false });
+  assert.throws(() => parseBackup("{ nope"), /not valid JSON/);
+  assert.throws(() => parseBackup("[]"), /no list of projects/);
+  assert.throws(() => parseBackup('{"name":"x"}'), /no list of projects/);
+  assert.throws(() => parseBackup('{"format":"something-else","projects":[]}'), /not a project-presets backup/);
+  assert.throws(() => parseBackup('{"format":"project-presets-backup","version":2,"projects":[]}'), /newer version/);
+  assert.equal(parseBackup('{"projects":[null,"x",{"name":"ok","path":"/a"}]}').projects.length, 1, "junk entries are skipped");
+});
+
+test("mergeProjects adds what is missing (same name and folder counts as present) and keeps yours", () => {
+  const mine = [normalize({ name: "api", path: "/r/api", startup: { agent: "claude" } }), normalize({ name: "Mine", path: "", template: true })];
+  const theirs = [
+    normalize({ name: "api", path: "/r/api/", startup: { agent: "codex" } }),
+    normalize({ name: "api", path: "/r/other" }),
+    normalize({ name: "blog", path: "~/blog" }),
+    normalize({ name: "Template", path: "", template: true }),
+  ];
+  const r = mergeProjects(mine, theirs);
+  assert.deepEqual(r.projects.map((p) => `${p.name}@${p.path}`), ["api@/r/api", "Mine@", "api@/r/other", "blog@~/blog"]);
+  assert.deepEqual([r.added, r.skipped], [2, 2]);
+  assert.equal(r.projects[0].startup.agent, "claude", "your copy of api is kept");
+  assert.equal(mergeProjects([], theirs).projects.filter((p) => p.template).length, 1, "a template is added when you have none");
+  assert.deepEqual(mine.length, 2, "the input is not changed");
+});
+
+test("mergeLayouts adds layouts by new name; yours win", () => {
+  const r = mergeLayouts([{ name: "a", panes: [1] }], [{ name: "a", panes: [2] }, { name: "b", panes: [] }, { panes: [] }, null]);
+  assert.deepEqual(r.layouts.map((l) => l.name), ["a", "b"]);
+  assert.deepEqual(r.layouts[0].panes, [1]);
+  assert.equal(r.added, 1);
+});
+
+test("exportFileName puts the local date and time in the name", () => {
+  assert.equal(exportFileName(new Date(2026, 10, 1, 13, 35, 7)), "project-presets-config-2026-11-01-133507.json");
+  assert.equal(exportFileName(new Date(2027, 0, 9, 0, 5, 0)), "project-presets-config-2027-01-09-000500.json");
+  assert.match(exportFileName(), /^project-presets-config-\d{4}-\d\d-\d\d-\d{6}\.json$/);
 });

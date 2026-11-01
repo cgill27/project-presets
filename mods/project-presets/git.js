@@ -84,6 +84,9 @@ export async function baseRef(folder, g) {
 
 const exists = async (path) => (await exec("test", ["-e", path])).code === 0;
 
+/** Whether a folder exists on this machine (the picker uses it to flag imported projects whose folder is missing). */
+export const folderExists = async (path) => { try { return (await exec("test", ["-d", path])).code === 0; } catch { return false; } };
+
 /** Creates the worktree. Returns { folder, branch }. Appends -2, -3… when the branch or path is taken. */
 export async function createWorktree(project, slugText, log) {
   const folder = projectFolder(project);

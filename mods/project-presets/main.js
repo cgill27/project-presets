@@ -4,14 +4,15 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
-import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home, spaces } from "herdr";
-import { loadConfig, saveConfig } from "./config.js";
-import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch, gitSummary } from "./git.js";
+import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home, spaces, readTextFile, writeTextFile } from "herdr";
+import { loadConfig, saveConfig, dataFilePath } from "./config.js";
+import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch, gitSummary, folderExists } from "./git.js";
 import { readDemo } from "./demo.js";
 import { initLog, log, logError } from "./log.js";
-import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, defaultTemplate, duplicateProject, startFromTemplate } from "./lib.js";
+import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, defaultTemplate, duplicateProject, startFromTemplate, expandHome, exportData, parseBackup, mergeProjects, mergeLayouts, exportFileName } from "./lib.js";
 
 const RECENT = "project-presets.recent";
+const EXPORT_DIR = "~/Downloads";
 const DETAIL = "project-presets.detail"; // false: hide the detail card (kept between sessions)
 // Shortcut hints: ⌘ on macOS (Option+letter types a character there), alt elsewhere.
 // The platform, copied from herdr with the rest of the snapshot (see takeSnapshot).
@@ -68,6 +69,7 @@ export default class ProjectPresets extends View {
     this.virtualTemplate = null; // the default template, shown until it is saved or deleted (see syncTemplate)
     this.hideTemplate = false;
     this.layouts = [];
+    this.userLayouts = []; // the layouts in the data file (this.layouts also has the built-in ones)
     this.refreshSnap();
     cx.timer.every(3000, (cx) => { if (this.refreshSnap()) cx.notify(); });
     this.detail = shared(DETAIL) !== false; // the detail card beside the list (ctrl+alt+I turns it off)
@@ -118,6 +120,7 @@ export default class ProjectPresets extends View {
         const c = await loadConfig();
         this.projects = c.projects;
         this.layouts = allLayouts(c.layouts);
+        this.userLayouts = c.layouts;
         this.gitInfo = c.gitInfo;
         this.hideTemplate = c.hideTemplate;
         this.syncTemplate();
@@ -186,6 +189,10 @@ export default class ProjectPresets extends View {
       this.edit(project ?? blankProject(), project ? this.projects.indexOf(project) : null);
       if (d.section) this.showSection(d.section);
       if (d.focus) this.fields.find(([k]) => k === d.focus)?.[1].focus();
+    } else if (d.view === "backup") {
+      this.openBackup();
+      if (d.text) this.backupPath.set_value(d.text);
+      if (d.note) this.backupNote = { text: d.note, bad: Boolean(d.bad) };
     } else if (d.view === "delete") this.pendingDelete = project;
     else if (d.view === "name") {
       this.target = project;
@@ -283,7 +290,7 @@ export default class ProjectPresets extends View {
    *  one this launch uses lit; for a second after a change the lit one turns bold with an accent ring. */
   footer(t, p, list) {
     const hints = list
-      ? [["Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("u"), "duplicate"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"], [LAYOUT_HINT(), "layout"], [DETAIL_HINT(), "details"]]
+      ? [["Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("u"), "duplicate"], [key("x"), "import/export"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"], [LAYOUT_HINT(), "layout"], [DETAIL_HINT(), "details"]]
       : [["Enter", "creates"], ["Esc", "back"]];
     const current = this.layoutNameFor(p);
     const lit = this.layoutLit;
@@ -600,6 +607,128 @@ export default class ProjectPresets extends View {
     });
   }
 
+  // ---- import and export of the config -----------------------------------------------
+
+  openBackup() {
+    this.mode = "backup";
+    this.error = null;
+    this.backupNote = null;
+    this.backupConfirm = null; // "overwrite" | "replace": the second click does it
+    const fresh = `${EXPORT_DIR}/${exportFileName()}`;
+    if (this.backupPath) this.backupPath.set_value(fresh);
+    else {
+      this.backupPath = InputState.new({ value: fresh });
+      this.backupPath.on("change", (_e, cx) => { this.backupConfirm = null; cx.notify(); });
+    }
+    this.backupPath.focus();
+  }
+
+  backupFile() { return expandHome(this.backupPath.value().trim(), homeOf()); }
+
+  setNote(text, bad = false) {
+    this.backupNote = { text, bad };
+    this.cx.notify();
+  }
+
+  /** Writes the project list, the layouts and the settings to the file in the box. An existing file is only replaced after a second click. */
+  async exportBackup() {
+    try {
+      const path = this.backupFile();
+      if (!path) return this.setNote("Type where to save the file.", true);
+      const existing = await readTextFile(path);
+      if (existing != null && this.backupConfirm !== "overwrite") {
+        this.backupConfirm = "overwrite";
+        return this.setNote(`${shortHome(path, homeOf())} already exists. Click Export again to replace it.`, true);
+      }
+      const data = exportData({ projects: this.projects, layouts: this.userLayouts, gitInfo: this.gitInfo, hideTemplate: this.hideTemplate }, homeOf());
+      await writeTextFile(path, JSON.stringify(data, null, 2) + "\n", existing);
+      this.backupConfirm = null;
+      this.setNote(`Exported ${data.projects.length} project(s) and ${data.layouts.length} layout(s) to ${shortHome(path, homeOf())}. Paths under your home folder are saved as ~.`);
+    } catch (e) {
+      logError("export", e);
+      this.setNote(`Export failed: ${e.message}`, true);
+    }
+  }
+
+  /** Reads the file in the box. "merge" adds what is missing and keeps yours; "replace" swaps everything for the backup, after a
+   *  second click and with your current file saved as <data file>.bak first. */
+  async importBackup(how) {
+    try {
+      const path = this.backupFile();
+      const text = path ? await readTextFile(path) : null;
+      if (text == null) return this.setNote(`There is no file at ${shortHome(path || "(nothing typed)", homeOf())}.`, true);
+      const backup = parseBackup(text);
+      const bak = `${dataFilePath()}.bak`;
+      let summary;
+      let added;
+      if (how === "replace") {
+        if (this.backupConfirm !== "replace") {
+          this.backupConfirm = "replace";
+          return this.setNote(`This replaces your ${this.projects.length} project(s) with the file's ${backup.projects.length}. Your current file is saved as ${shortHome(bak, homeOf())} first. Click Import: replace again to go on.`, true);
+        }
+        await writeTextFile(bak, this.raw ?? "{}\n", await readTextFile(bak));
+        this.raw = await saveConfig(backup.projects, this.raw, { layouts: backup.layouts, gitInfo: backup.gitInfo, hideTemplate: backup.hideTemplate });
+        this.applyConfig(backup.projects, backup.layouts, backup.gitInfo, backup.hideTemplate);
+        added = backup.projects;
+        summary = `Replaced everything with the file: ${backup.projects.length} project(s), ${backup.layouts.length} layout(s). Your previous file is saved as ${shortHome(bak, homeOf())}.`;
+      } else {
+        const merged = mergeProjects(this.projects, backup.projects);
+        const layouts = mergeLayouts(this.userLayouts, backup.layouts);
+        this.raw = await saveConfig(merged.projects, this.raw, { layouts: layouts.layouts });
+        added = merged.projects.filter((p) => !this.projects.includes(p));
+        this.applyConfig(merged.projects, layouts.layouts, this.gitInfo, this.hideTemplate);
+        summary = `Merged: ${merged.added} project(s) added, ${merged.skipped} already here${layouts.added ? `, ${layouts.added} layout(s) added` : ""}.`;
+      }
+      this.backupConfirm = null;
+      const missing = [];
+      for (const p of added) if (!p.template && p.path && !(await folderExists(expandHome(p.path, homeOf())))) missing.push(p.name);
+      this.setNote(missing.length ? `${summary} ${missing.length} folder(s) don't exist on this machine: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}. Press Esc, then ${key("e")} on each to fix its folder.` : summary);
+    } catch (e) {
+      logError("import", e);
+      this.setNote(`Import failed: ${e.message}`, true);
+    }
+  }
+
+  /** Makes a restored or merged project list the current one. */
+  applyConfig(projects, layouts, gitInfo, hideTemplate) {
+    this.projects = projects;
+    this.userLayouts = layouts;
+    this.layouts = allLayouts(layouts);
+    this.gitInfo = gitInfo;
+    this.hideTemplate = hideTemplate;
+    this.syncTemplate();
+    this.info = {};
+    this.at = 0;
+    if (this.gitInfo) this.loadInfo(this.cx);
+  }
+
+  async browseBackup() {
+    const dir = await pickFolder({ prompt: "Save the export here" });
+    if (!dir) return;
+    const name = this.backupFile().split("/").pop() || "project-presets-backup.json";
+    this.backupPath.set_value(`${dir}/${name}`);
+    this.cx.notify();
+  }
+
+  renderBackup(t, cx) {
+    const confirmAction = this.backupConfirm;
+    return v_flex().gap(10)
+      .child(this.title(t, "Import and export config", "Esc back"))
+      .child(div().text_size(12).text_color(t.dim).child("Export saves your project list, layouts and settings to one file. Import brings them back, on this machine or another. Paths under your home folder are saved as ~, so an exported file works on a machine with a different user name."))
+      .child(div().text_size(11.5).text_color(t.dim).child("File"))
+      .child(h_flex().gap(8).items_center()
+        .child(h_flex().flex_1().h(36).px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
+          .child(Input.new(this.backupPath).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
+        .child(this.button(t, "pp-bk-browse", "Browse…", false, () => this.browseBackup())))
+      .child(h_flex().gap(8).items_center().flex_wrap()
+        .child(this.button(t, "pp-bk-export", confirmAction === "overwrite" ? "Click again to replace the file" : "Export", true, () => this.exportBackup()))
+        .child(this.button(t, "pp-bk-merge", "Import: merge", false, () => this.importBackup("merge")))
+        .child(this.button(t, "pp-bk-replace", confirmAction === "replace" ? "Click again to replace everything" : "Import: replace", false, () => this.importBackup("replace"))))
+      .child(div().text_size(11).text_color(t.dim).child("Merge adds the projects you don't have and keeps yours. Replace swaps everything for the file, after a second click, and first saves your current file as project-presets.json.bak."))
+      .when(Boolean(this.backupNote), (el) => el.child(div().text_size(12).text_color(this.backupNote.bad ? t.blocked : t.done).child(this.backupNote.text)))
+      .child(h_flex().justify_end().child(this.button(t, "pp-bk-back", "Back", false, () => { this.mode = "list"; this.search.focus(); cx.notify(); })));
+  }
+
   // ---- keys -------------------------------------------------------------
 
   keys(e, cx) {
@@ -621,6 +750,7 @@ export default class ProjectPresets extends View {
       else if (k === "w" && mod) this.openWorktrees();
       else if (k === "n" && mod) this.edit(this.newProject(), null);
       else if (k === "u" && mod) this.duplicateSelected();
+      else if (k === "x" && mod) this.openBackup();
       else if (k === "l" && layoutMod) this.cycleLayout(this.selected()?.p ?? blankProject());
       else if (k === "i" && layoutMod) this.toggleDetail();
       else if (k === "e" && mod) this.editSelected();
@@ -650,7 +780,7 @@ export default class ProjectPresets extends View {
     this.frame = { rows: this.mode === "list" ? this.rows() : [] };
     let body;
     try {
-      body = { list: () => this.renderList(t, cx), edit: () => this.renderEdit(t, cx), worktrees: () => this.renderWorktrees(t, cx), name: () => this.renderName(t), busy: () => this.renderBusy(t) }[this.mode]();
+      body = { list: () => this.renderList(t, cx), edit: () => this.renderEdit(t, cx), worktrees: () => this.renderWorktrees(t, cx), backup: () => this.renderBackup(t, cx), name: () => this.renderName(t), busy: () => this.renderBusy(t) }[this.mode]();
     } finally {
       this.frame = null;
     }
@@ -809,13 +939,15 @@ export default class ProjectPresets extends View {
   listFooter(t, cx, rows) {
     const p = this.selected()?.p ?? blankProject();
     const details = this.button(t, "pp-details", this.detail ? "Hide details" : "Show details", false, () => { this.toggleDetail(); cx.notify(); });
+    const backup = this.button(t, "pp-backup", "Import / export…", false, () => { this.openBackup(); cx.notify(); });
     const add = this.button(t, "pp-add", "Add project", true, () => { this.edit(this.newProject(), null); cx.notify(); });
-    if (this.detail) return h_flex().gap(12).items_center().child(div().flex_1().min_w(0).child(this.footer(t, p, true))).child(details).child(add);
+    if (this.detail) return h_flex().gap(12).items_center().child(div().flex_1().min_w(0).child(this.footer(t, p, true))).child(backup).child(details).child(add);
     return v_flex().gap(10)
       .child(this.footer(t, p, true))
       .child(h_flex().gap(8).items_center().justify_end()
         .when(rows.length > 0, (el) => el.child(this.actionButtons(t, cx)))
         .child(div().flex_1())
+        .child(backup)
         .child(details)
         .child(add));
   }

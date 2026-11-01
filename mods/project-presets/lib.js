@@ -309,3 +309,77 @@ export function duplicateProject(p, takenNames) {
 export function startFromTemplate(template) {
   return { ...duplicateProject(template, []), name: "", path: "" };
 }
+
+// ---- backup and restore ----------------------------------------------------------------------------
+
+/** A path with the home folder written as `~`, so a backup works on a machine with another user name. */
+export function portablePath(path, home) {
+  const s = String(path ?? "");
+  const h = String(home ?? "").replace(/\/+$/, "");
+  if (!h) return s;
+  if (s === h) return "~";
+  return s.startsWith(h + "/") ? "~" + s.slice(h.length) : s;
+}
+
+export const BACKUP_FORMAT = "project-presets-backup";
+
+/** What an export writes: the whole data file (projects, layouts, settings) with home-folder paths made portable. */
+export function exportData({ projects, layouts, gitInfo, hideTemplate }, home, now = new Date()) {
+  return {
+    format: BACKUP_FORMAT,
+    version: 1,
+    exportedAt: now.toISOString(),
+    gitInfo: gitInfo !== false,
+    hideTemplate: hideTemplate === true,
+    layouts: layouts ?? [],
+    projects: (projects ?? []).map((p) => ({ ...p, path: portablePath(p.path, home), worktree: { ...p.worktree, root: portablePath(p.worktree?.root, home) } })),
+  };
+}
+
+/** Reads a backup (or a plain project-presets.json): { projects, layouts, gitInfo, hideTemplate }. Throws with the reason. */
+export function parseBackup(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { throw new Error(`That file is not valid JSON: ${e.message}`); }
+  if (!data || typeof data !== "object" || !Array.isArray(data.projects)) throw new Error("That file has no list of projects: is it a project-presets backup?");
+  if (data.format !== undefined && data.format !== BACKUP_FORMAT) throw new Error(`That file is not a project-presets backup (format "${data.format}")`);
+  if (data.version > 1) throw new Error("That backup is from a newer version of project-presets: update the mod, then import it");
+  return {
+    projects: data.projects.filter((p) => p && typeof p === "object").map(normalize),
+    layouts: Array.isArray(data.layouts) ? data.layouts : [],
+    gitInfo: data.gitInfo !== false,
+    hideTemplate: data.hideTemplate === true,
+  };
+}
+
+const projectKey = (p) => `${p.name}\u0000${String(p.path ?? "").replace(/\/+$/, "")}`;
+
+/** Adds the incoming projects that are not already there (same name and folder), keeping yours as they are.
+ *  An incoming template is skipped when you have one. */
+export function mergeProjects(existing, incoming) {
+  const have = new Set(existing.map(projectKey));
+  const hasTemplate = existing.some((p) => p.template);
+  const projects = [...existing];
+  let added = 0;
+  let skipped = 0;
+  for (const p of incoming) {
+    if (have.has(projectKey(p)) || (p.template && hasTemplate)) { skipped++; continue; }
+    projects.push(p);
+    have.add(projectKey(p));
+    added++;
+  }
+  return { projects, added, skipped };
+}
+
+/** Adds the incoming layouts whose names you don't have; yours win. */
+export function mergeLayouts(existing, incoming) {
+  const names = new Set(existing.map((l) => l.name));
+  const fresh = incoming.filter((l) => l && typeof l.name === "string" && !names.has(l.name));
+  return { layouts: [...existing, ...fresh], added: fresh.length };
+}
+
+/** The default name for an export, with the local date and time so each export keeps its own file:
+ *  project-presets-config-2026-11-01-133500.json */
+export function exportFileName(now = new Date()) {
+  const n = (v, w = 2) => String(v).padStart(w, "0");
+  return `project-presets-config-${now.getFullYear()}-${n(now.getMonth() + 1)}-${n(now.getDate())}-${n(now.getHours())}${n(now.getMinutes())}${n(now.getSeconds())}.json`;
+}

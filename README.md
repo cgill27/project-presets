@@ -105,6 +105,16 @@ The last row of the list is a **Template**: a project with no folder and some st
 - **Duplicate any project** with **alt+u** (**⌘U**) or the Duplicate button. The editor opens on a copy named `<name> copy` (then `copy 2`, …) with the same folder and settings, not pinned; change what differs and save. It is the quick way to open one repository with another agent, layout or worktree mode.
 - **Remove the template** with Delete if you don't want the row; it stays gone. To bring it back, delete `"hideTemplate"` from `~/.config/herdr-app/data/project-presets.json`.
 
+### Importing and exporting your config
+
+**Import / export…** (**alt+x**, **⌘X**) opens a screen with a file box (default `~/Downloads/project-presets-config-<date>-<time>.json`, so each export gets its own file; Browse… picks the folder) and three buttons:
+
+- **Export** writes your whole project list, your layouts and your settings to that file. Paths under your home folder are saved as `~`, so the exported file works on a machine with a different user name. If the file already exists, Export asks you to click again before it replaces it.
+- **Import: merge** adds the projects in the file that you don't have (same name and folder) and any layouts with new names. Yours are never changed or removed.
+- **Import: replace** makes your list exactly the exported file. It asks you to click again, and first saves your current file as `project-presets.json.bak` next to it.
+
+After an import the screen lists any project whose folder doesn't exist on this machine; press Esc and **alt+e** on it to point it at the right folder. To move to a new machine: Export on the old one, copy the file across, Import on the new one (merge is enough if it's empty).
+
 ### Cleaning up worktrees
 
 Worktrees lists a project's linked worktrees with whether each is merged into the base branch, has uncommitted changes, or is open in a space. Tick the ones to remove, or Tick merged for every merged, clean one. Removing asks once more. Worktrees with uncommitted changes are never removed, and a branch is deleted only when it is merged.
