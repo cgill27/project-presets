@@ -141,6 +141,8 @@ Only errors are logged by default. Debug logging is **off** unless you turn it o
 
 **The shortcut does nothing right after launching herdr-app with no space open.** The window has no pane to hold the keyboard yet, so herdr doesn't see the key. Click once in the window (the "No space open." area), then press the shortcut; once you've had a space open it keeps working. This is herdr-app, not the mod: the shortcut is handled by herdr before the mod runs. Running `herdr-app do mod.open '{"name":"project-presets"}'` from a terminal is another way to open the picker.
 
+**The picker is slow to open, keys lag, or `herdr-app` uses a lot of CPU while it is open, and you may see "This view could not be re-rendered … interrupted".** This is an old herdr-core bug, not the mod: with an older core, `herdr-app` used a full CPU core whenever a popup like this one was open, and herdr cut slow draws off. It is fixed in a later herdr-core (see its release notes). Update it (`hc update`, or your package manager if herdr was installed with one) and restart herdr-app. On herdr-core `hc 0.1.16` with `herdr-app 0.1.11` the picker used about 10% CPU while open, against about 99% before the update. If you cannot update, hide the detail card (ctrl+alt+I, ⌘⌥I on macOS) and set `"gitInfo": false` next to `projects` in `project-presets.json`.
+
 **Where the log is:** `~/.config/herdr-app/data/project-presets.log` (the last 64 KB are kept). Errors also appear in the popup.
 
 **Turn debug logging on** to capture a problem:
