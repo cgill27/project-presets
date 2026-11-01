@@ -900,3 +900,26 @@ test("by default the git details are gathered after the list shows", async () =>
   const t = texts(v);
   assert.ok(t.includes("Branch") && t.includes("1 file modified") && t.includes("1 changed"));
 });
+
+// ---------------------------------------------------------------- closing
+
+test("herdr's own close hook only stops background work; it does not close an overlay itself", async () => {
+  const { v } = await open([proj("demo", "/r/demo")]);
+  const before = state.closed;
+  v.overlay = null; // opened without an overlay id, as a command-line open is
+  assert.doesNotThrow(() => v.close({}));
+  assert.equal(v.closing, true);
+  assert.equal(state.closed, before, "no closeOverlay call");
+  assert.deepEqual(state.runs.filter((r) => r.command === "overlay.close"), [], "and no command either");
+});
+
+test("Escape closes the popup through its overlay id, or by command when it has none", async () => {
+  const { v, cx } = await open([proj("demo", "/r/demo")]);
+  press(v, cx, "escape");
+  assert.equal(state.closed, 1);
+  const again = await open([proj("demo", "/r/demo")]);
+  again.v.overlay = null;
+  press(again.v, again.cx, "escape");
+  assert.equal(state.closed, 0, "closeOverlay is not called with no id");
+  assert.deepEqual(state.runs.filter((r) => r.command === "overlay.close"), [{ command: "overlay.close", args: {} }]);
+});

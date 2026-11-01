@@ -183,7 +183,15 @@ export default class ProjectPresets extends View {
     }
   }
 
-  close() { this.closing = true; closeOverlay(this.overlay); }
+  /** Closes the popup. Not called `close`: herdr calls a view's `close(cx)` as its own cleanup hook when the popup goes. */
+  dismiss() {
+    this.closing = true;
+    if (this.overlay) closeOverlay(this.overlay);
+    else run("overlay.close", {}); // opened without an overlay id (a command line open): close the top one
+  }
+
+  /** herdr's hook for when the popup is going: stop background work. */
+  close() { this.closing = true; }
 
   query() { return this.search.value(); }
 
@@ -367,7 +375,7 @@ export default class ProjectPresets extends View {
           await runSetup(p, folder, log);
         } else if (existing) {
           setShared(RECENT, { ...(shared(RECENT) ?? {}), [p.path]: Date.now() });
-          this.close();
+          this.dismiss();
           return run("space.select", { id: existing.id });
         } else {
           await prepareMain(p, log);
@@ -377,7 +385,7 @@ export default class ProjectPresets extends View {
         if (p.startup.agent.trim() && p.startup.prompt && p.startup.promptMode === "send") log("Waiting for the agent to be ready for its prompt…");
         // Stay open until the prompt is sent: closing the popup cancels this task.
         await launch(p, folder, name, layout);
-        this.close();
+        this.dismiss();
       } catch (e) {
         logError("open project", e);
         this.error = e.message;
@@ -557,7 +565,7 @@ export default class ProjectPresets extends View {
     const layoutMod = e.modifiers.alt && (ctrl || e.modifiers.platform);
     if (this.pendingDelete && k !== "d") this.pendingDelete = null;
     if (k === "escape") {
-      if (this.mode === "list") this.close();
+      if (this.mode === "list") this.dismiss();
       else if (this.mode === "busy" && !this.error) return;
       else { this.mode = "list"; this.error = null; this.search.focus(); }
     } else if (this.mode === "list") {
