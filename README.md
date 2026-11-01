@@ -102,12 +102,18 @@ Settings are split into four sections.
 
 The last row of the list is a **Template**: a project with no folder and some starting settings (Claude Code, the agent + terminal-below layout, ask for a branch name). It is a starting point, not something you open.
 
+![The Template row selected: its card and Use template](docs/screenshots/19-template.png)
+
 - **Make your defaults once.** Select the Template and press **alt+e** (**⌘E**), set the agent, layout, worktree and git settings you want your projects to share, and save. A saved template has no folder, so saving never asks for one.
 - **Make a project from it.** Select the Template and press **Enter** (or click Use template). The editor opens on a new project with the template's settings; give it a name and a folder (Browse…) and save. The Template stays for the next one. Once you have saved the template, **Add project** (**alt+n**) starts from its settings too.
 - **Duplicate any project** with **alt+u** (**⌘U**) or the Duplicate button. The editor opens on a copy named `<name> copy` (then `copy 2`, …) with the same folder and settings, not pinned; change what differs and save. It is the quick way to open one repository with another agent, layout or worktree mode.
+![Duplicating a project: the editor opens on a copy](docs/screenshots/20-duplicate.png)
+
 - **Remove the template** with Delete if you don't want the row; it stays gone. To bring it back, delete `"hideTemplate"` from `~/.config/herdr-app/data/project-presets.json`.
 
 ### Importing and exporting your config
+
+![Import and export config](docs/screenshots/21-import-export.png)
 
 **Import / export…** (**alt+x**, **⌘X**) opens a screen with a file box (default `~/Downloads/project-presets-config-<date>-<time>.json`, so each export gets its own file; Browse… picks the folder) and three buttons:
 
@@ -115,7 +121,7 @@ The last row of the list is a **Template**: a project with no folder and some st
 - **Import: merge** adds the projects in the file that you don't have (same name and folder) and any layouts with new names. Yours are never changed or removed.
 - **Import: replace** makes your list exactly the exported file. It asks you to click again, and first saves your current file as `project-presets.json.bak` next to it.
 
-After an import the screen lists any project whose folder doesn't exist on this machine; go back (**alt+b**) and press **alt+e** on it to point it at the right folder. To move to a new machine: Export on the old one, copy the file across, Import on the new one (merge is enough if it's empty).
+After an import the screen lists any project whose folder doesn't exist on this machine; go back (**alt+b**, **⌘⌥B** on a Mac) and press **alt+e** on it to point it at the right folder. To move to a new machine: Export on the old one, copy the file across, Import on the new one (merge is enough if it's empty).
 
 ### Cleaning up worktrees
 
@@ -160,7 +166,7 @@ rsync -a --delete --exclude='*.d.ts' ~/code/project-presets/mods/project-presets
 
 Only errors are logged by default. Debug logging is **off** unless you turn it on.
 
-**Esc closes the whole popup instead of going back.** Herdr closes a popup on Esc itself and never passes the key to the mod, so the picker can't use it to go back. Use **alt+b** (**⌘B**) to go back one screen (from the editor, Worktrees, Import / export…), or click Back / Cancel. Esc still closes the picker.
+**Esc closes the whole popup instead of going back.** Herdr closes a popup on Esc itself and never passes the key to the mod, so the picker can't use it to go back. Use **alt+b** (**⌘⌥B** on a Mac, since herdr uses ⌘B itself) to go back one screen (from the editor, Worktrees, Import / export…), or click Back / Cancel. Esc still closes the picker.
 
 **The shortcut does nothing right after launching herdr-app with no space open.** The window has no pane to hold the keyboard yet, so herdr doesn't see the key. Click once in the window (the "No space open." area), then press the shortcut; once you've had a space open it keeps working. This is herdr-app, not the mod: the shortcut is handled by herdr before the mod runs. Running `herdr-app do mod.open '{"name":"project-presets"}'` from a terminal is another way to open the picker.
 

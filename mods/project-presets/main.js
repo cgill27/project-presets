@@ -1,6 +1,6 @@
 // Project presets: a picker of configured git checkouts, each with its own worktree and startup
 // settings. Type to filter, ↑/↓ and Enter to open, Shift+Enter for the main checkout, Add project / Edit / Worktrees / Delete
-// buttons (or alt/ctrl/cmd + n, e, w, d), alt/ctrl/cmd + b to go back a screen. Herdr itself closes a popup on Esc and
+// buttons (or alt/ctrl/cmd + n, e, w, d), alt+b (cmd+alt+B on a Mac) to go back a screen. Herdr itself closes a popup on Esc and
 // never passes that key to the mod, so Esc can only close the picker.
 
 import { View, div, image, svg } from "gpui-kit";
@@ -22,6 +22,8 @@ const mac = () => platformNow === "macos";
 let homeDir;
 const homeOf = () => (homeDir ??= home());
 const key = (letter, other = "alt") => (mac() ? `⌘${letter.toUpperCase()}` : `${other}+${letter}`);
+/** The way back a screen. Herdr closes a popup on Esc itself, and it owns cmd+B on a Mac, so a Mac gets the cmd+alt chord (like the layout and details keys). */
+const backKey = () => (mac() ? "⌘⌥B" : "alt+b");
 // Herdr binds a bare alt+l to moving between panes, so the layout key needs ctrl (⌘ on macOS) as well, like the open key.
 const FOOTER_SIZE = 12;
 const LAYOUT_HINT = () => (mac() ? "⌘⌥L" : "ctrl+alt+L");
@@ -190,7 +192,8 @@ export default class ProjectPresets extends View {
       this.edit(project ?? blankProject(), project ? this.projects.indexOf(project) : null);
       if (d.section) this.showSection(d.section);
       if (d.focus) this.fields.find(([k]) => k === d.focus)?.[1].focus();
-    } else if (d.view === "backup") {
+    } else if (d.view === "duplicate") this.duplicateSelected(); // a copy of the project, or a new project from the template when that row is picked
+    else if (d.view === "backup") {
       this.openBackup();
       if (d.text) this.backupPath.set_value(d.text);
       if (d.note) this.backupNote = { text: d.note, bad: Boolean(d.bad) };
@@ -292,7 +295,7 @@ export default class ProjectPresets extends View {
   footer(t, p, list) {
     const hints = list
       ? [["Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("u"), "duplicate"], [key("x"), "import/export"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"], [LAYOUT_HINT(), "layout"], [DETAIL_HINT(), "details"]]
-      : [["Enter", "creates"], [key("b"), "back"], ["Esc", "closes"]];
+      : [["Enter", "creates"], [backKey(), "back"], ["Esc", "closes"]];
     const current = this.layoutNameFor(p);
     const lit = this.layoutLit;
     const choice = (name, label) => {
@@ -683,7 +686,7 @@ export default class ProjectPresets extends View {
       this.backupConfirm = null;
       const missing = [];
       for (const p of added) if (!p.template && p.path && !(await folderExists(expandHome(p.path, homeOf())))) missing.push(p.name);
-      this.setNote(missing.length ? `${summary} ${missing.length} folder(s) don't exist on this machine: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}. Go back (${key("b")}), then press ${key("e")} on each to fix its folder.` : summary);
+      this.setNote(missing.length ? `${summary} ${missing.length} folder(s) don't exist on this machine: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}. Go back (${backKey()}), then press ${key("e")} on each to fix its folder.` : summary);
     } catch (e) {
       logError("import", e);
       this.setNote(`Import failed: ${e.message}`, true);
@@ -714,7 +717,7 @@ export default class ProjectPresets extends View {
   renderBackup(t, cx) {
     const confirmAction = this.backupConfirm;
     return v_flex().gap(10)
-      .child(this.title(t, "Import and export config", `${key("b")} back · Esc closes`))
+      .child(this.title(t, "Import and export config", `${backKey()} back · Esc closes`))
       .child(div().text_size(12).text_color(t.dim).child("Export saves your project list, layouts and settings to one file. Import brings them back, on this machine or another. Paths under your home folder are saved as ~, so an exported file works on a machine with a different user name."))
       .child(div().text_size(11.5).text_color(t.dim).child("File"))
       .child(h_flex().gap(8).items_center()
@@ -1026,7 +1029,7 @@ export default class ProjectPresets extends View {
       .when(w.locked, (el) => el.child(div().text_size(11).text_color(t.blocked).child("locked")))
       .child(div().text_size(11).text_color(w.merged ? t.done : t.dim).child(w.merged ? "merged" : "unmerged"));
     return v_flex().gap(10).min_h(0)
-      .child(this.title(t, `Worktrees · ${this.target.name}`, `${key("b")} back · Esc closes`))
+      .child(this.title(t, `Worktrees · ${this.target.name}`, `${backKey()} back · Esc closes`))
       .child(h_flex().h(36).flex_none().px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.wtSearch).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.error)))
@@ -1049,7 +1052,7 @@ export default class ProjectPresets extends View {
   renderName(t) {
     const p = this.target;
     return v_flex().gap(10)
-      .child(this.title(t, `New worktree · ${p.name}`, `${key("b")} back · Esc closes`))
+      .child(this.title(t, `New worktree · ${p.name}`, `${backKey()} back · Esc closes`))
       .child(h_flex().h(36).px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.nameInput).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .child(div().text_size(12).text_color(this.error ? t.blocked : t.dim).child(this.error ?? (this.preview ? `branch: ${this.preview}` : "")))
@@ -1135,7 +1138,7 @@ export default class ProjectPresets extends View {
       ],
     };
     return v_flex().gap(0).min_h(0)
-      .child(this.title(t, { add: "Add project", edit: "Edit project", duplicate: "Duplicate project", template: "Edit template", fromTemplate: "New project from the template" }[this.editKind ?? "add"], `Tab next field · ${key("s", "ctrl")} save · ${key("b")} back · Esc closes`))
+      .child(this.title(t, { add: "Add project", edit: "Edit project", duplicate: "Duplicate project", template: "Edit template", fromTemplate: "New project from the template" }[this.editKind ?? "add"], `Tab next field · ${key("s", "ctrl")} save · ${backKey()} back · Esc closes`))
       .child(h_flex().pt(10).gap(6)
         .children(SECTIONS.map(([id, name]) => this.button(t, `pp-sec-${id}`, name, this.section === id, () => this.showSection(id)))))
       .child(v_flex().min_h(0).h(430).overflow_y_scrollbar().pr(8).children(sections[this.section]()))

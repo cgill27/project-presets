@@ -479,6 +479,24 @@ test("the screens say how to go back, and that Esc closes", async () => {
   assert.ok(texts(v).includes("alt+b back · Esc closes"));
 });
 
+test("on a Mac the way back is cmd+alt+B (herdr owns cmd+B), and the screens say so", async () => {
+  const { v, cx } = await open([proj("demo", "/r/demo")]);
+  state.platform = "macos"; // the picker reads it with the rest of herdr's data, when it redraws
+  rendered(v);
+  press(v, cx, "x", { platform: true });
+  assert.equal(v.mode, "backup");
+  assert.ok(texts(v).includes("⌘⌥B back · Esc closes"));
+  assert.ok(!texts(v).includes("⌘B back"));
+  press(v, cx, "b", { platform: true, alt: true });
+  assert.equal(v.mode, "list");
+  press(v, cx, "e", { platform: true });
+  assert.equal(v.mode, "edit");
+  assert.ok(texts(v).includes("⌘⌥B back"));
+  press(v, cx, "b", { platform: true, alt: true });
+  assert.equal(v.mode, "list");
+  assert.equal(state.closed, 0);
+});
+
 test("Escape steps back one screen at a time and then closes", async () => {
   const { v, cx } = await open([proj("demo", "/r/demo")]);
   press(v, cx, "e", { alt: true });
