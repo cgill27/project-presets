@@ -9,7 +9,7 @@ import { loadConfig, saveConfig } from "./config.js";
 import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch, gitSummary } from "./git.js";
 import { readDemo } from "./demo.js";
 import { initLog, log, logError } from "./log.js";
-import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor } from "./lib.js";
+import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, defaultTemplate, duplicateProject, startFromTemplate } from "./lib.js";
 
 const RECENT = "project-presets.recent";
 const DETAIL = "project-presets.detail"; // false: hide the detail card (kept between sessions)
@@ -65,6 +65,8 @@ export default class ProjectPresets extends View {
     this.ranges = {};
     this.overlay = props()?.overlay;
     this.projects = [];
+    this.virtualTemplate = null; // the default template, shown until it is saved or deleted (see syncTemplate)
+    this.hideTemplate = false;
     this.layouts = [];
     this.refreshSnap();
     cx.timer.every(3000, (cx) => { if (this.refreshSnap()) cx.notify(); });
@@ -117,6 +119,8 @@ export default class ProjectPresets extends View {
         this.projects = c.projects;
         this.layouts = allLayouts(c.layouts);
         this.gitInfo = c.gitInfo;
+        this.hideTemplate = c.hideTemplate;
+        this.syncTemplate();
         this.raw = c.raw;
       } catch (e) {
         logError("load config", e);
@@ -138,10 +142,25 @@ export default class ProjectPresets extends View {
     cx.timer.after(250, () => { this.bumpPending = false; cx.notify(); });
   }
 
+  /** The default template is a row nobody has saved yet: it shows until the file has a template of its own, or the person
+   *  deleted it (`hideTemplate` in the data file). */
+  syncTemplate() {
+    this.virtualTemplate = !this.hideTemplate && !this.projects.some((p) => p.template) ? (this.virtualTemplate ?? defaultTemplate()) : null;
+  }
+
+  /** The saved projects plus the unsaved default template, when it shows. */
+  allProjects() { return this.virtualTemplate ? [...this.projects, this.virtualTemplate] : this.projects; }
+
+  /** A new project: blank, or with the settings of a template the person has saved (not the unsaved default one). */
+  newProject() {
+    const template = this.projects.find((p) => p.template);
+    return template ? startFromTemplate(template) : blankProject();
+  }
+
   /** Branch, changed files and worktree count for each project, three at a time so the list stays quick. */
   async loadInfo(cx) {
     const token = (this.infoToken = (this.infoToken ?? 0) + 1);
-    const queue = [...this.projects];
+    const queue = this.projects.filter((p) => !p.template && p.path);
     const worker = async () => {
       for (let p = queue.shift(); p; p = queue.shift()) {
         if (this.infoToken !== token || this.closing) return;
@@ -228,14 +247,14 @@ export default class ProjectPresets extends View {
     const recent = this.snap.recent;
     const q = this.query();
     const open = this.snap.spaces;
-    const rows = this.projects.map((p) => {
+    const rows = this.allProjects().map((p) => {
       const score = Math.max(fuzzy(q, p.name), fuzzy(q, p.group), fuzzy(q, basename(p.path)) - 1);
       const folder = projectFolder(p);
-      return { p, score, space: open.find((s) => s.folder === folder), used: recent[p.path] ?? 0 };
+      return { p, score, space: p.template ? undefined : open.find((s) => s.folder === folder), used: recent[p.path] ?? 0 };
     }).filter((r) => r.score >= 0);
     rows.sort((a, b) => q
       ? b.score - a.score
-      : (!!b.space - !!a.space) || (b.p.pinned - a.p.pinned) || (b.used - a.used) || a.p.name.localeCompare(b.p.name));
+      : (!!a.p.template - !!b.p.template) || (!!b.space - !!a.space) || (b.p.pinned - a.p.pinned) || (b.used - a.used) || a.p.name.localeCompare(b.p.name));
     return rows;
   }
 
@@ -264,7 +283,7 @@ export default class ProjectPresets extends View {
    *  one this launch uses lit; for a second after a change the lit one turns bold with an accent ring. */
   footer(t, p, list) {
     const hints = list
-      ? [["Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"], [LAYOUT_HINT(), "layout"], [DETAIL_HINT(), "details"]]
+      ? [["Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("u"), "duplicate"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"], [LAYOUT_HINT(), "layout"], [DETAIL_HINT(), "details"]]
       : [["Enter", "creates"], ["Esc", "back"]];
     const current = this.layoutNameFor(p);
     const lit = this.layoutLit;
@@ -318,6 +337,7 @@ export default class ProjectPresets extends View {
   activate(mainOnly) {
     const r = this.selected();
     if (!r || this.mode !== "list") return;
+    if (r.p.template) return this.duplicateSelected(); // a template has no folder to open: Enter makes a project from it
     this.target = r.p;
     const mode = mainOnly ? "never" : r.p.worktree.mode;
     if (mode === "ask") return this.askName(r.p);
@@ -396,14 +416,15 @@ export default class ProjectPresets extends View {
 
   // ---- editor -----------------------------------------------------------
 
-  edit(project, index) {
-    try { this.openEditor(project, index); } catch (e) { logError("editor", e); this.mode = "list"; this.error = `Editor failed: ${e.message}`; }
+  edit(project, index, kind) {
+    try { this.openEditor(project, index, kind); } catch (e) { logError("editor", e); this.mode = "list"; this.error = `Editor failed: ${e.message}`; }
     this.cx?.notify();
   }
 
-  openEditor(project, index) {
+  openEditor(project, index, kind) {
     this.mode = "edit";
     this.index = index; // null: new
+    this.editKind = kind ?? (project.template ? "template" : index == null ? "add" : "edit");
     this.draft = JSON.parse(JSON.stringify(project));
     this.error = null;
     this.confirmDelete = false;
@@ -439,11 +460,15 @@ export default class ProjectPresets extends View {
       for (const [key, state] of this.fields) TEXT.find(([k]) => k === key)[3](this.draft, key === "path" ? state.value() : state.value().trim());
       const d = this.draft;
       if (!d.name) throw new Error("Give the project a name");
-      await inspect(projectFolder(d));
+      if (!d.template) {
+        if (!d.path.trim()) throw new Error("Choose the project's folder: Browse… or type its path");
+        await inspect(projectFolder(d));
+      }
       const list = [...this.projects];
       if (this.index == null) list.push(d); else list[this.index] = d;
       this.raw = await saveConfig(list, this.raw);
       this.projects = list;
+      this.syncTemplate();
       this.mode = "list";
       this.error = null;
       this.search.focus();
@@ -458,8 +483,11 @@ export default class ProjectPresets extends View {
     if (!this.confirmDelete) { this.confirmDelete = true; return cx.notify(); }
     try {
       const list = this.projects.filter((_p, i) => i !== this.index);
-      this.raw = await saveConfig(list, this.raw);
+      const template = this.draft.template;
+      this.raw = await saveConfig(list, this.raw, template ? { hideTemplate: true } : {});
       this.projects = list;
+      if (template) this.hideTemplate = true;
+      this.syncTemplate();
       this.mode = "list";
       this.search.focus();
     } catch (e) { logError("delete", e); this.error = e.message; }
@@ -475,7 +503,16 @@ export default class ProjectPresets extends View {
 
   editSelected() {
     const r = this.selected();
-    if (r) this.edit(r.p, this.projects.indexOf(r.p));
+    if (!r) return;
+    const index = this.projects.indexOf(r.p);
+    this.edit(r.p, index < 0 ? null : index);
+  }
+
+  /** ctrl/alt+U: opens the editor on a copy of the highlighted project (from the template: a new project with its settings). */
+  duplicateSelected() {
+    const r = this.selected();
+    if (!r || this.mode !== "list") return;
+    this.edit(duplicateProject(r.p, this.allProjects().map((p) => p.name)), null, r.p.template ? "fromTemplate" : "duplicate");
   }
 
   // ---- delete project ---------------------------------------------------
@@ -487,14 +524,21 @@ export default class ProjectPresets extends View {
     if (this.pendingDelete !== r.p) { this.pendingDelete = r.p; this.error = null; return; }
     const list = this.projects.filter((p) => p !== r.p);
     this.pendingDelete = null;
-    saveConfig(list, this.raw).then((raw) => { this.raw = raw; this.projects = list; this.cx.notify(); }).catch((e) => this.fail("delete project", e));
+    const template = Boolean(r.p.template);
+    saveConfig(list, this.raw, template ? { hideTemplate: true } : {}).then((raw) => {
+      this.raw = raw;
+      this.projects = list;
+      if (template) this.hideTemplate = true;
+      this.syncTemplate();
+      this.cx.notify();
+    }).catch((e) => this.fail("delete project", e));
   }
 
   // ---- worktree cleanup -------------------------------------------------
 
   openWorktrees() {
     const r = this.selected();
-    if (!r) return;
+    if (!r || r.p.template) return; // a template has no repository
     this.target = r.p;
     this.mode = "worktrees";
     this.wts = null;
@@ -575,7 +619,8 @@ export default class ProjectPresets extends View {
       else if (k === "enter" && e.modifiers.shift) { this.handled = Date.now(); this.activate(true); }
       else if (k === "d" && mod) this.deleteSelected();
       else if (k === "w" && mod) this.openWorktrees();
-      else if (k === "n" && mod) this.edit(blankProject(), null);
+      else if (k === "n" && mod) this.edit(this.newProject(), null);
+      else if (k === "u" && mod) this.duplicateSelected();
       else if (k === "l" && layoutMod) this.cycleLayout(this.selected()?.p ?? blankProject());
       else if (k === "i" && layoutMod) this.toggleDetail();
       else if (k === "e" && mod) this.editSelected();
@@ -680,17 +725,42 @@ export default class ProjectPresets extends View {
 
   /** Worktrees, Edit and Delete for the highlighted project: in the detail card, or under the list without it. */
   actionButtons(t, cx) {
-    return h_flex().gap(8).items_center()
+    return h_flex().gap(8).items_center().flex_wrap()
+      .child(this.button(t, "pp-dup", "Duplicate", false, () => { this.duplicateSelected(); cx.notify(); }))
       .child(this.button(t, "pp-wt", "Worktrees", false, () => { this.openWorktrees(); cx.notify(); }))
       .child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); }))
       .child(this.button(t, "pp-delete", this.pendingDelete ? "Delete?" : "Delete", false, () => { this.deleteSelected(); cx.notify(); }));
   }
 
   /** The detail card: what the highlighted project is, what Enter will do, and the layout choice. */
+  /** The card for the template row: what it is, the settings a project made from it starts with, and its buttons. */
+  renderTemplateCard(t, card, r, cx) {
+    const p = r.p;
+    const name = commandName(p.startup.agent);
+    const program = name && this.allAgents.find((a) => a.key === name || commandName((a.run ?? []).join(" ")) === name);
+    const kv = (k, v) => h_flex().gap(10).text_size(12).text_color(t.foreground).child(div().w(84).text_color(t.dim).child(k)).child(v);
+    return card
+      .child(h_flex().gap(10).items_center()
+        .child(this.avatar(t, p, null, 24))
+        .child(div().text_size(16).font_semibold().text_color(t.foreground).child(p.name))
+        .child(this.tag(t, "template", t.accent)))
+      .child(div().text_size(12).text_color(t.dim).child(`Not a real project: it has no folder. Edit it (${key("e")}) to set the defaults you want, then use it to make projects. Add project starts from it once you have saved it.`))
+      .child(v_flex().gap(3)
+        .child(kv("Agent", program?.name ?? (name || "plain shell")))
+        .child(kv("Layout", p.startup.layout || "agent only"))
+        .child(kv("Worktrees", enterAction(p.worktree.mode)[0]))
+        .when(Boolean(p.group), (el) => el.child(kv("Group", p.group))))
+      .child(h_flex().gap(8).items_center().flex_wrap()
+        .child(this.button(t, "pp-use", "Use template", true, () => { this.duplicateSelected(); cx.notify(); }))
+        .child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); }))
+        .child(this.button(t, "pp-delete", this.pendingDelete ? "Delete?" : "Delete", false, () => { this.deleteSelected(); cx.notify(); })));
+  }
+
   renderCard(t, r, cx) {
     const card = v_flex().w(CARD).flex_none().gap(10).p(14).rounded(12).border_1().border_color(t.input).bg(t.raised);
     if (!r) return card.child(div().text_color(t.dim).text_size(12).child("Nothing selected."));
     const p = r.p;
+    if (p.template) return this.renderTemplateCard(t, card, r, cx);
     const folder = projectFolder(p);
     const info = this.info[folder];
     const name = commandName(p.startup.agent);
@@ -739,7 +809,7 @@ export default class ProjectPresets extends View {
   listFooter(t, cx, rows) {
     const p = this.selected()?.p ?? blankProject();
     const details = this.button(t, "pp-details", this.detail ? "Hide details" : "Show details", false, () => { this.toggleDetail(); cx.notify(); });
-    const add = this.button(t, "pp-add", "Add project", true, () => { this.edit(blankProject(), null); cx.notify(); });
+    const add = this.button(t, "pp-add", "Add project", true, () => { this.edit(this.newProject(), null); cx.notify(); });
     if (this.detail) return h_flex().gap(12).items_center().child(div().flex_1().min_w(0).child(this.footer(t, p, true))).child(details).child(add);
     return v_flex().gap(10)
       .child(this.footer(t, p, true))
@@ -767,7 +837,8 @@ export default class ProjectPresets extends View {
         .child(this.agentIcon(t, r.p))
         .child(v_flex().flex_1().min_w(0)
           .child(this.nameText(t, r.p.name))
-          .child(div().text_size(11).text_color(t.dim).truncate().child(shortHome(projectFolder(r.p), homeOf()))))
+          .child(div().text_size(11).text_color(t.dim).truncate().child(r.p.template ? "A starting point: press Enter to make a project from it" : shortHome(projectFolder(r.p), homeOf()))))
+        .when(Boolean(r.p.template), (el) => el.child(this.tag(t, "template", t.accent)))
         .when(Boolean(r.p.group), (el) => el.child(div().text_size(11).text_color(t.dim).child(r.p.group)))
         .when(Boolean(info), (el) => el.child(h_flex().gap(5).flex_none()
           .child(this.tag(t, info.branch, t.dim, t.input))
@@ -791,14 +862,19 @@ export default class ProjectPresets extends View {
       .child(this.title(t, "Projects", "Esc"))
       .child(h_flex().h(36).flex_none().px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.search).flex_1().h_full().text_size(12.8).text_color(t.foreground))
-        .child(div().text_size(11).text_color(t.dim).child(`${rows.length} of ${this.projects.length}`)))
+        .child(div().text_size(11).text_color(t.dim).child(`${rows.length} of ${this.allProjects().length}`)))
       .child(this.error ? div().text_size(12).text_color(t.blocked).child(this.error) : div())
       .child(h_flex().gap(14).items_start().min_h(0)
         .child(v_flex().flex_1().min_w(0).gap(6)
           .child(list)
-          .when(!rows.length, (el) => el.child(div().py(14).text_color(t.dim).child(this.projects.length ? "No project matches." : "No projects yet. Click Add project below a git checkout."))))
+          .when(!rows.length, (el) => el.child(div().py(14).text_color(t.dim).child("No project matches.")))
+          .when(!this.query() && !this.projects.some((p) => !p.template), (el) => el.child(div().py(8).px(14).text_size(12).text_color(t.dim).child(this.virtualTemplate || this.projects.some((p) => p.template)
+            ? "No projects yet. Edit the Template to suit you ({e}), then press Enter on it to make your first project, or click Add project.".replace("{e}", key("e"))
+            : "No projects yet. Click Add project and choose a git checkout."))))
         .when(this.detail, (el) => el.child(this.renderCard(t, this.selected(), cx))))
-      .when(Boolean(this.pendingDelete), (el) => el.child(div().text_size(12).text_color(t.blocked).child(`Remove "${this.pendingDelete.name}" from the list? Press ${key("d")} again or click Delete. The folder and its worktrees stay.`)))
+      .when(Boolean(this.pendingDelete), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.pendingDelete.template
+        ? `Remove the template? Press ${key("d")} again or click Delete. To bring it back later, delete "hideTemplate" from project-presets.json.`
+        : `Remove "${this.pendingDelete.name}" from the list? Press ${key("d")} again or click Delete. The folder and its worktrees stay.`)))
       .child(this.listFooter(t, cx, rows));
   }
 
@@ -926,7 +1002,7 @@ export default class ProjectPresets extends View {
       ],
     };
     return v_flex().gap(0).min_h(0)
-      .child(this.title(t, this.index == null ? "Add project" : "Edit project", `Tab next field · ${key("s", "ctrl")} save · Esc back`))
+      .child(this.title(t, { add: "Add project", edit: "Edit project", duplicate: "Duplicate project", template: "Edit template", fromTemplate: "New project from the template" }[this.editKind ?? "add"], `Tab next field · ${key("s", "ctrl")} save · Esc back`))
       .child(h_flex().pt(10).gap(6)
         .children(SECTIONS.map(([id, name]) => this.button(t, `pp-sec-${id}`, name, this.section === id, () => this.showSection(id)))))
       .child(v_flex().min_h(0).h(430).overflow_y_scrollbar().pr(8).children(sections[this.section]()))

@@ -9,7 +9,7 @@ const file = `${state.appHome}/data/project-presets.json`;
 
 test("a missing file is an empty list", async () => {
   reset();
-  assert.deepEqual(await loadConfig(), { projects: [], layouts: [], gitInfo: true, raw: null });
+  assert.deepEqual(await loadConfig(), { projects: [], layouts: [], gitInfo: true, hideTemplate: false, raw: null });
 });
 
 test("save then load round-trips and fills defaults", async () => {
@@ -68,4 +68,17 @@ test("git details are on unless the data file says gitInfo: false", async () => 
   const { raw, projects } = await loadConfig();
   await saveConfig(projects, raw);
   assert.equal(JSON.parse(readFileSync(file, "utf8")).gitInfo, false, "saving keeps it");
+});
+
+test("hideTemplate is read only when it is true, and saveConfig can set it while keeping everything else", async () => {
+  writeFileSync(file, JSON.stringify({ projects: [], hideTemplate: "yes" }));
+  assert.equal((await loadConfig()).hideTemplate, false);
+  writeFileSync(file, JSON.stringify({ note: "keep", layouts: [{ name: "a", panes: [] }], projects: [] }));
+  const { raw, projects } = await loadConfig();
+  await saveConfig(projects, raw, { hideTemplate: true });
+  const data = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(data.hideTemplate, true);
+  assert.equal(data.note, "keep");
+  assert.equal(data.layouts[0].name, "a");
+  assert.equal((await loadConfig()).hideTemplate, true);
 });

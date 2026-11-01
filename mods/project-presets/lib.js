@@ -220,14 +220,15 @@ export function ago(ts, now = Date.now()) {
   return `${Math.floor(d / 30)} months ago`;
 }
 
-/** The list as shown: section headers (Open now, Pinned, Everything else) and the rows between them, each row
+/** The list as shown: section headers (Open now, Pinned, Everything else, Template) and the rows between them, each row
  *  keeping its index into `rows`. No headers while searching (the order is then by match) or when only one
  *  section has anything in it. */
 export function listItems(rows, searching) {
   const parts = [
-    ["Open now", (r) => r.space],
-    ["Pinned", (r) => !r.space && r.p.pinned],
-    ["Everything else", (r) => !r.space && !r.p.pinned],
+    ["Open now", (r) => r.space && !r.p.template],
+    ["Pinned", (r) => !r.space && r.p.pinned && !r.p.template],
+    ["Everything else", (r) => !r.space && !r.p.pinned && !r.p.template],
+    ["Template", (r) => r.p.template],
   ].map(([title, test]) => ({ title, rows: rows.map((r, index) => ({ r, index })).filter((x) => test(x.r)) })).filter((x) => x.rows.length);
   if (searching || parts.length < 2) return rows.map((r, index) => ({ row: r, index }));
   return parts.flatMap((x) => [{ header: x.title }, ...x.rows.map(({ r, index }) => ({ row: r, index }))]);
@@ -269,4 +270,42 @@ export const SPACE_MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def"
 export function spaceColor(colors, id, theme = {}) {
   const c = (colors ?? {})[id] ?? "ansi6";
   return c.startsWith("#") ? c : (SPACE_MARK[c] ?? theme[c] ?? SPACE_MARK.ansi6);
+}
+
+// ---- the template, and duplicating -------------------------------------------------------------
+
+/** The starting point a new person edits and duplicates: a project with no folder (`template: true`) and some sensible
+ *  settings. It is shown in the list until it is saved or deleted. */
+export function defaultTemplate() {
+  return normalize({
+    name: "Template",
+    path: "",
+    template: true,
+    worktree: { mode: "ask" },
+    startup: { agent: "claude", layout: "agent-terminal" },
+  });
+}
+
+/** A name not in `taken`: "api copy", then "api copy 2", "api copy 3"… */
+export function uniqueName(base, taken) {
+  const names = new Set(taken);
+  if (!names.has(base)) return base;
+  for (let n = 2; ; n++) if (!names.has(`${base} ${n}`)) return `${base} ${n}`;
+}
+
+/** A copy to edit: unique name, not pinned, no template flag. The folder is kept (the same repo with other settings is the
+ *  usual reason to duplicate), except from a template, which has none. */
+export function duplicateProject(p, takenNames) {
+  const copy = JSON.parse(JSON.stringify(p));
+  delete copy.template;
+  copy.pinned = false;
+  copy.name = uniqueName(p.template ? "New project" : `${p.name} copy`, takenNames);
+  if (p.template) copy.path = "";
+  return normalize(copy);
+}
+
+/** A blank project that starts with the template's settings (agent, layout, worktree and git settings, group) but not its
+ *  name or folder. */
+export function startFromTemplate(template) {
+  return { ...duplicateProject(template, []), name: "", path: "" };
 }

@@ -96,6 +96,15 @@ Settings are split into four sections.
 
 ![Add project](docs/screenshots/11-add-project.png)
 
+### The template, and duplicating a project
+
+The last row of the list is a **Template**: a project with no folder and some starting settings (Claude Code, the agent + terminal-below layout, ask for a branch name). It is a starting point, not something you open.
+
+- **Make your defaults once.** Select the Template and press **alt+e** (**⌘E**), set the agent, layout, worktree and git settings you want your projects to share, and save. A saved template has no folder, so saving never asks for one.
+- **Make a project from it.** Select the Template and press **Enter** (or click Use template). The editor opens on a new project with the template's settings; give it a name and a folder (Browse…) and save. The Template stays for the next one. Once you have saved the template, **Add project** (**alt+n**) starts from its settings too.
+- **Duplicate any project** with **alt+u** (**⌘U**) or the Duplicate button. The editor opens on a copy named `<name> copy` (then `copy 2`, …) with the same folder and settings, not pinned; change what differs and save. It is the quick way to open one repository with another agent, layout or worktree mode.
+- **Remove the template** with Delete if you don't want the row; it stays gone. To bring it back, delete `"hideTemplate"` from `~/.config/herdr-app/data/project-presets.json`.
+
 ### Cleaning up worktrees
 
 Worktrees lists a project's linked worktrees with whether each is merged into the base branch, has uncommitted changes, or is open in a space. Tick the ones to remove, or Tick merged for every merged, clean one. Removing asks once more. Worktrees with uncommitted changes are never removed, and a branch is deleted only when it is merged.

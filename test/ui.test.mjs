@@ -26,7 +26,7 @@ async function open(projects, layouts, opts = { detail: true }) {
   reset();
   if ("detail" in opts) setShared("project-presets.detail", opts.detail);
   mkdirSync(`${state.appHome}/data`, { recursive: true });
-  writeFileSync(dataFile(), JSON.stringify({ ...(layouts ? { layouts } : {}), ...("gitInfo" in opts ? { gitInfo: opts.gitInfo } : {}), projects }, null, 2));
+  writeFileSync(dataFile(), JSON.stringify({ ...(layouts ? { layouts } : {}), ...("gitInfo" in opts ? { gitInfo: opts.gitInfo } : {}), ...(opts.template ? {} : { hideTemplate: true }), projects }, null, 2));
   const pending = [];
   const cx = {
     timers: [],
@@ -979,4 +979,165 @@ test("the worktree list scrolls with its highlight too", async () => {
   v.wtScroll.calls.length = 0;
   v.reveal("pp-worktrees", v.wtScroll, 9);
   assert.deepEqual(v.wtScroll.calls, [9]);
+});
+
+// ---------------------------------------------------------------- the template and duplicating
+
+const T = { detail: true, template: true };
+const fieldOf = (v, key) => v.fields.find(([k]) => k === key)[1];
+const rowNames = (v) => v.rows().map((r) => r.p.name);
+
+test("the default template is the last row for everyone, tagged and under its own header", async () => {
+  const { v } = await open([proj("zeta", "/r/z", { pinned: true }), proj("alpha", "/r/a")], undefined, T);
+  assert.deepEqual(rowNames(v), ["zeta", "alpha", "Template"]);
+  const t = texts(v);
+  assert.ok(t.includes("TEMPLATE") && t.includes("template") && t.includes("A starting point: press Enter to make a project from it"));
+  assert.ok(t.includes("3 of 3"));
+});
+
+test("with no projects the list is just the template and says what to do", async () => {
+  const { v } = await open([], undefined, T);
+  assert.deepEqual(rowNames(v), ["Template"]);
+  assert.match(texts(v), /No projects yet\. Edit the Template to suit you \(alt\+e\), then press Enter on it/);
+  assert.ok(!texts(v).includes("No project matches"));
+});
+
+test("a project is not hidden by the template: hideTemplate in the data file removes the row", async () => {
+  const { v } = await open([proj("alpha", "/r/a")], undefined, {});
+  assert.deepEqual(rowNames(v), ["alpha"]);
+});
+
+test("the template card says what it is and offers Use template, Edit and Delete only", async () => {
+  const { v, cx } = await open([], undefined, T);
+  const t = texts(v);
+  for (const s of ["Not a real project", "Agent", "Claude Code", "Layout", "agent-terminal", "Worktrees", "asks for a branch name", "Use template", "Edit", "Delete"]) assert.ok(t.includes(s), s);
+  assert.ok(!hasId(v, "pp-open") && !hasId(v, "pp-checkout") && !hasId(v, "pp-wt"), "nothing that needs a folder");
+});
+
+test("Enter on the template opens the editor on a new project with its settings and no folder", async () => {
+  const { v, cx } = await open([], undefined, T);
+  enter(v);
+  assert.equal(v.mode, "edit");
+  assert.equal(v.editKind, "fromTemplate");
+  assert.equal(fieldOf(v, "name").value(), "New project");
+  assert.equal(fieldOf(v, "path").value(), "");
+  assert.equal(fieldOf(v, "agent").value(), "claude");
+  assert.ok(texts(v).includes("New project from the template"));
+  assert.equal(v.index, null);
+  assert.deepEqual(spaceNew(), [], "nothing was launched");
+  press(v, cx, "enter", { shift: true });
+  assert.equal(v.mode, "edit", "Shift+Enter on the list would do the same, but the editor is already open");
+});
+
+test("saving a project made from the template needs a folder, and keeps the template", async () => {
+  const dir = makeRepo();
+  const { v, cx } = await open([], undefined, T);
+  enter(v);
+  await v.save(cx);
+  assert.match(v.error, /Choose the project's folder/);
+  assert.equal(v.mode, "edit");
+  fieldOf(v, "path").set_value(dir);
+  fieldOf(v, "name").set_value("api");
+  await v.save(cx);
+  assert.equal(v.error, null);
+  assert.equal(v.mode, "list");
+  const saved = JSON.parse(readFileSync(dataFile(), "utf8")).projects;
+  assert.deepEqual(saved.map((p) => p.name), ["api"]);
+  assert.equal(saved[0].startup.agent, "claude");
+  assert.equal(saved[0].template, undefined);
+  assert.deepEqual(rowNames(v), ["api", "Template"], "the template is still there");
+});
+
+test("ctrl+alt+U duplicates the highlighted project: a copy to edit, same folder, unique name", async () => {
+  const dir = makeRepo();
+  const { v, cx } = await open([proj("api", dir, { pinned: true, startup: { agent: "codex" }, group: "work" })], undefined, {});
+  press(v, cx, "u", { alt: true });
+  assert.equal(v.mode, "edit");
+  assert.equal(v.editKind, "duplicate");
+  assert.ok(texts(v).includes("Duplicate project"));
+  assert.equal(fieldOf(v, "name").value(), "api copy");
+  assert.equal(fieldOf(v, "path").value(), dir);
+  assert.equal(fieldOf(v, "agent").value(), "codex");
+  assert.equal(v.draft.pinned, false);
+  await v.save(cx);
+  assert.equal(v.error, null);
+  assert.deepEqual(JSON.parse(readFileSync(dataFile(), "utf8")).projects.map((p) => p.name), ["api", "api copy"]);
+  assert.equal(v.projects[0].pinned, true, "the original is untouched");
+  press(v, cx, "u", { alt: true });
+  assert.equal(fieldOf(v, "name").value(), "api copy 2", "a second copy gets the next name");
+});
+
+test("the Duplicate button does the same, and Escape leaves without saving", async () => {
+  const { v, cx } = await open([proj("api", "/r/api")], undefined, {});
+  findAll(rendered(v), (e) => e.op?.("id")?.[0] === "pp-dup")[0].op("on_click")[0]();
+  assert.equal(v.mode, "edit");
+  press(v, cx, "escape");
+  assert.equal(v.mode, "list");
+  assert.deepEqual(rowNames(v), ["api"]);
+});
+
+test("editing the template saves it as a real entry; Add project then starts from it", async () => {
+  const { v, cx } = await open([proj("api", "/r/api")], undefined, T);
+  assert.equal(v.newProject().startup.agent, "", "before it is saved, Add project is blank");
+  assert.equal(v.newProject().name, "");
+  v.at = rowNames(v).indexOf("Template");
+  press(v, cx, "e", { alt: true });
+  assert.equal(v.editKind, "template");
+  assert.ok(texts(v).includes("Edit template"));
+  fieldOf(v, "agent").set_value("hermes");
+  fieldOf(v, "group").set_value("starter");
+  await v.save(cx);
+  assert.equal(v.error, null, "no folder needed for a template");
+  const saved = JSON.parse(readFileSync(dataFile(), "utf8")).projects;
+  const tpl = saved.find((p) => p.template);
+  assert.equal(tpl.startup.agent, "hermes");
+  assert.equal(v.virtualTemplate, null, "the unsaved one is gone");
+  assert.deepEqual(rowNames(v), ["api", "Template"]);
+  const fresh = v.newProject();
+  assert.deepEqual([fresh.startup.agent, fresh.group, fresh.name, fresh.path], ["hermes", "starter", "", ""]);
+  press(v, cx, "n", { alt: true });
+  assert.equal(fieldOf(v, "agent").value(), "hermes", "the n key opens the editor with the template's settings");
+});
+
+test("deleting the template hides it for good", async () => {
+  const { v, cx } = await open([proj("api", "/r/api")], undefined, T);
+  v.at = rowNames(v).indexOf("Template");
+  press(v, cx, "d", { alt: true });
+  assert.match(texts(v), /Remove the template\? .*hideTemplate/);
+  press(v, cx, "d", { alt: true });
+  await cx.settle();
+  assert.deepEqual(rowNames(v), ["api"]);
+  const data = JSON.parse(readFileSync(dataFile(), "utf8"));
+  assert.equal(data.hideTemplate, true);
+  assert.deepEqual(data.projects.map((p) => p.name), ["api"]);
+  v.reload(cx);
+  await cx.settle();
+  assert.deepEqual(rowNames(v), ["api"], "still gone after a reload");
+});
+
+test("deleting a saved template also hides it", async () => {
+  const { v, cx } = await open([proj("api", "/r/api"), normalize({ name: "Mine", path: "", template: true })], undefined, T);
+  assert.deepEqual(rowNames(v), ["api", "Mine"], "a saved template replaces the default one");
+  v.at = 1;
+  press(v, cx, "d", { alt: true });
+  press(v, cx, "d", { alt: true });
+  await cx.settle();
+  assert.deepEqual(rowNames(v), ["api"]);
+  assert.equal(JSON.parse(readFileSync(dataFile(), "utf8")).hideTemplate, true);
+});
+
+test("a template never launches or opens worktrees, and git is not run for it", async () => {
+  const { v, cx } = await open([], undefined, T);
+  press(v, cx, "w", { alt: true });
+  assert.equal(v.mode, "list");
+  await v.loadInfo(cx);
+  assert.deepEqual(v.info, {});
+  assert.deepEqual(spaceNew(), []);
+});
+
+test("searching finds the template by name, and the card still follows the highlight", async () => {
+  const { v } = await open([proj("api", "/r/api")], undefined, T);
+  v.search.set_value("templ");
+  assert.deepEqual(rowNames(v), ["Template"]);
+  assert.ok(texts(v).includes("Use template"));
 });

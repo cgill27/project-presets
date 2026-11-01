@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fuzzy, slug, expand, branchName, expandHome, splitList, normalize, splitArgs, basename, parseWorktrees, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, SPACE_MARK, allLayouts, layoutPlan, nextLayout, inFolder, BUILTIN_LAYOUTS, dateStamp, timeStamp, shortHome, joinList, blankProject } from "../mods/project-presets/lib.js";
+import { fuzzy, slug, expand, branchName, expandHome, splitList, normalize, splitArgs, basename, parseWorktrees, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, SPACE_MARK, defaultTemplate, uniqueName, duplicateProject, startFromTemplate, allLayouts, layoutPlan, nextLayout, inFolder, BUILTIN_LAYOUTS, dateStamp, timeStamp, shortHome, joinList, blankProject } from "../mods/project-presets/lib.js";
 
 test("fuzzy matches subsequences and ranks tighter matches higher", () => {
   assert.equal(fuzzy("zzz", "herdr"), -1);
@@ -275,4 +275,64 @@ test("spaceColor reads herdr's stored names and hex colors, and defaults to teal
   assert.equal(spaceColor(undefined, "a"), SPACE_MARK.ansi6);
   assert.equal(spaceColor({ a: "ansi9" }, "a", { ansi9: "#010203" }), "#010203");
   assert.equal(spaceColor({ a: "nope" }, "a", {}), SPACE_MARK.ansi6);
+});
+
+test("the default template is a project with no folder and some starting settings", () => {
+  const tpl = defaultTemplate();
+  assert.equal(tpl.template, true);
+  assert.equal(tpl.name, "Template");
+  assert.equal(tpl.path, "");
+  assert.equal(tpl.startup.agent, "claude");
+  assert.equal(tpl.startup.layout, "agent-terminal");
+  assert.equal(tpl.worktree.mode, "ask");
+  assert.deepEqual(defaultTemplate(), tpl, "the same every time");
+});
+
+test("uniqueName adds a counter only when the name is taken", () => {
+  assert.equal(uniqueName("api copy", []), "api copy");
+  assert.equal(uniqueName("api copy", ["api copy"]), "api copy 2");
+  assert.equal(uniqueName("api copy", ["api copy", "api copy 2", "api copy 4"]), "api copy 3");
+});
+
+test("duplicateProject copies the settings, keeps the folder, drops pinned, and names the copy", () => {
+  const src = normalize({ name: "api", path: "/r/api", group: "work", pinned: true, startup: { agent: "codex", layout: "agent-terminal" }, worktree: { mode: "always" } });
+  const copy = duplicateProject(src, ["api"]);
+  assert.equal(copy.name, "api copy");
+  assert.equal(copy.path, "/r/api");
+  assert.equal(copy.pinned, false);
+  assert.equal(copy.group, "work");
+  assert.equal(copy.startup.agent, "codex");
+  assert.equal(copy.worktree.mode, "always");
+  assert.equal(copy.template, undefined);
+  assert.equal(duplicateProject(src, ["api", "api copy"]).name, "api copy 2");
+  copy.startup.agent = "changed";
+  assert.equal(src.startup.agent, "codex", "a deep copy");
+});
+
+test("duplicating the template makes a project with the template's settings and no folder", () => {
+  const copy = duplicateProject(defaultTemplate(), ["Template"]);
+  assert.equal(copy.name, "New project");
+  assert.equal(copy.path, "");
+  assert.equal(copy.template, undefined);
+  assert.equal(copy.startup.agent, "claude");
+  assert.equal(duplicateProject(defaultTemplate(), ["New project"]).name, "New project 2");
+});
+
+test("startFromTemplate keeps the settings and blanks the name and folder", () => {
+  const tpl = normalize({ name: "Mine", path: "", template: true, pinned: true, group: "g", startup: { agent: "hermes", promptMode: "send" }, git: { base: "develop" } });
+  const p = startFromTemplate(tpl);
+  assert.equal(p.name, "");
+  assert.equal(p.path, "");
+  assert.equal(p.pinned, false);
+  assert.equal(p.template, undefined);
+  assert.deepEqual([p.group, p.startup.agent, p.startup.promptMode, p.git.base], ["g", "hermes", "send", "develop"]);
+});
+
+test("listItems puts the template in its own last section, never under Open now or Pinned", () => {
+  const rows = [
+    { p: { name: "a", pinned: false }, space: null },
+    { p: { name: "Template", template: true, pinned: true }, space: undefined },
+  ];
+  assert.deepEqual(listItems(rows, false).map((i) => i.header ?? i.row.p.name), ["Everything else", "a", "Template", "Template"]);
+  assert.deepEqual(listItems(rows.slice(1), false).map((i) => i.header ?? "row"), ["row"], "alone: no header");
 });
