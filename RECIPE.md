@@ -8,10 +8,10 @@ A project picker for the Herdr app. You keep a list of local git checkouts, each
 
 A popup, 680px wide, top-aligned 40px down, up to 80% of the window high, on the theme's `popover` background.
 
-- Title "Projects" with "Esc" on the right.
+- Title "Projects" with "Esc" on the right (other screens say "alt+b back · Esc closes").
 - A 36px search box with an `accent` border.
 - One 48px row per project (a scrolling list with a scrollbar; the wheel and the arrow keys scroll): a marker (`●` in the agent-status color when the project's folder already has a space, `★` when pinned, else `·`), the name, the folder shortened with `~`, the group at the right, then `checkout`, `worktree?` or `worktree` for the project's mode.
-- A footer: a line of the key hints, then buttons at the right: Worktrees, Edit, Delete (each only when a project is listed) and Add project.
+- A toolbar under the search box (`renderToolbar`): Add project, then Duplicate, Worktrees (not for a template), Edit and Delete (only when a project is listed), "acts on <name>" for the highlighted project, and at the right Import / export… and Show/Hide details. It wraps if the popup is narrow. The footer is only the line of key hints (and, without the card, the layout choice); the detail card has no action buttons of its own except Create worktree / Checkout (Use template for the template).
 
 Ordering with an empty search: projects with an open space, pinned ones, recently used, then by name. With a query: best fuzzy match first (subsequence match on name, group and folder name; consecutive and word-start letters score higher).
 
@@ -24,7 +24,7 @@ The editor replaces the list in the same popup, in four sections chosen by butto
   - `always`: create a worktree and open a space on it. The `{slug}` part is the time (HHMMSS).
   - `ask`: a name step appears with a live preview of the resulting branch; Enter creates it. Empty name uses the time.
 - **Shift+Enter** always means the main checkout, whatever the mode (same steps as `never`).
-- With alt, ctrl or cmd held (⌘ on macOS): **w** (or the Worktrees button) opens worktree cleanup, **d** (or Delete) removes the project from the list after a second press, **n** (or Add project) adds a project, **e** (or Edit) edits the highlighted one, **s** saves, **Tab** moves between fields, **Esc** goes back one step, then closes.
+- With alt, ctrl or cmd held (⌘ on macOS): **w** (or the Worktrees button) opens worktree cleanup, **d** (or Delete) removes the project from the list after a second press, **n** (or Add project) adds a project, **e** (or Edit) edits the highlighted one, **s** saves, **Tab** moves between fields, **alt+b** (**⌘B**) goes back one screen (not a bracket key: herdr binds alt-[ and alt-] to tabs and acts on them before the popup sees them); **Esc** closes the popup (herdr closes a popup on Esc itself and never gives the key to the mod, so the mod's own Esc branch only runs outside a popup; the debug log showed no `key escape` line).
 - While working, the popup lists progress lines (`git fetch origin…`, `git worktree add …`, `$ <setup command>`) and Esc does nothing; for a "typed after start" prompt it stays open, with a "Waiting for the agent…" line, until the prompt is sent, then closes. An error stays on screen until Esc.
 - Worktree creation: `git fetch <remote>` (a failure is logged and the local ref is used), then `git worktree add --no-track -b <branch> <folder> <remote>/<base>`. A taken branch or folder gets `-2`, `-3`… up to `-20`.
 - Fast-forward only happens on the checkout when it is on the base branch, clean, and can fast-forward.

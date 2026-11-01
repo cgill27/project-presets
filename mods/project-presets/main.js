@@ -1,6 +1,7 @@
 // Project presets: a picker of configured git checkouts, each with its own worktree and startup
 // settings. Type to filter, ↑/↓ and Enter to open, Shift+Enter for the main checkout, Add project / Edit / Worktrees / Delete
-// buttons (or alt/ctrl/cmd + n, e, w, d), Esc to leave.
+// buttons (or alt/ctrl/cmd + n, e, w, d), alt/ctrl/cmd + b to go back a screen. Herdr itself closes a popup on Esc and
+// never passes that key to the mod, so Esc can only close the picker.
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
@@ -291,7 +292,7 @@ export default class ProjectPresets extends View {
   footer(t, p, list) {
     const hints = list
       ? [["Enter", "opens"], ["Shift+Enter", "checkout"], [key("n"), "add"], [key("u"), "duplicate"], [key("x"), "import/export"], [key("e"), "edit"], [key("w"), "worktrees"], [key("d"), "delete"], [LAYOUT_HINT(), "layout"], [DETAIL_HINT(), "details"]]
-      : [["Enter", "creates"], ["Esc", "back"]];
+      : [["Enter", "creates"], [key("b"), "back"], ["Esc", "closes"]];
     const current = this.layoutNameFor(p);
     const lit = this.layoutLit;
     const choice = (name, label) => {
@@ -682,7 +683,7 @@ export default class ProjectPresets extends View {
       this.backupConfirm = null;
       const missing = [];
       for (const p of added) if (!p.template && p.path && !(await folderExists(expandHome(p.path, homeOf())))) missing.push(p.name);
-      this.setNote(missing.length ? `${summary} ${missing.length} folder(s) don't exist on this machine: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}. Press Esc, then ${key("e")} on each to fix its folder.` : summary);
+      this.setNote(missing.length ? `${summary} ${missing.length} folder(s) don't exist on this machine: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}. Go back (${key("b")}), then press ${key("e")} on each to fix its folder.` : summary);
     } catch (e) {
       logError("import", e);
       this.setNote(`Import failed: ${e.message}`, true);
@@ -713,7 +714,7 @@ export default class ProjectPresets extends View {
   renderBackup(t, cx) {
     const confirmAction = this.backupConfirm;
     return v_flex().gap(10)
-      .child(this.title(t, "Import and export config", "Esc back"))
+      .child(this.title(t, "Import and export config", `${key("b")} back · Esc closes`))
       .child(div().text_size(12).text_color(t.dim).child("Export saves your project list, layouts and settings to one file. Import brings them back, on this machine or another. Paths under your home folder are saved as ~, so an exported file works on a machine with a different user name."))
       .child(div().text_size(11.5).text_color(t.dim).child("File"))
       .child(h_flex().gap(8).items_center()
@@ -737,8 +738,10 @@ export default class ProjectPresets extends View {
     const mod = ctrl || e.modifiers.alt || e.modifiers.platform; // ctrl, alt or cmd
     const layoutMod = e.modifiers.alt && (ctrl || e.modifiers.platform);
     if (this.pendingDelete && k !== "d") this.pendingDelete = null;
-    if (k === "escape") {
-      if (this.mode === "list") this.dismiss();
+    // herdr never passes Esc to a popup, so this is the way back. (Not a bracket key: herdr binds alt-[ and alt-] to tabs.)
+    const back = k === "b" && mod;
+    if (k === "escape" || back) {
+      if (this.mode === "list") { if (back) return; this.dismiss(); }
       else if (this.mode === "busy" && !this.error) return;
       else { this.mode = "list"; this.error = null; this.search.focus(); }
     } else if (this.mode === "list") {
@@ -857,7 +860,7 @@ export default class ProjectPresets extends View {
   actionButtons(t, cx) {
     return h_flex().gap(8).items_center().flex_wrap()
       .child(this.button(t, "pp-dup", "Duplicate", false, () => { this.duplicateSelected(); cx.notify(); }))
-      .child(this.button(t, "pp-wt", "Worktrees", false, () => { this.openWorktrees(); cx.notify(); }))
+      .when(!this.selected()?.p.template, (el) => el.child(this.button(t, "pp-wt", "Worktrees", false, () => { this.openWorktrees(); cx.notify(); })))
       .child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); }))
       .child(this.button(t, "pp-delete", this.pendingDelete ? "Delete?" : "Delete", false, () => { this.deleteSelected(); cx.notify(); }));
   }
@@ -881,9 +884,7 @@ export default class ProjectPresets extends View {
         .child(kv("Worktrees", enterAction(p.worktree.mode)[0]))
         .when(Boolean(p.group), (el) => el.child(kv("Group", p.group))))
       .child(h_flex().gap(8).items_center().flex_wrap()
-        .child(this.button(t, "pp-use", "Use template", true, () => { this.duplicateSelected(); cx.notify(); }))
-        .child(this.button(t, "pp-edit", "Edit", false, () => { this.editSelected(); cx.notify(); }))
-        .child(this.button(t, "pp-delete", this.pendingDelete ? "Delete?" : "Delete", false, () => { this.deleteSelected(); cx.notify(); })));
+        .child(this.button(t, "pp-use", "Use template", true, () => { this.duplicateSelected(); cx.notify(); })));
   }
 
   renderCard(t, r, cx) {
@@ -930,26 +931,25 @@ export default class ProjectPresets extends View {
       .child(div().text_size(12).text_color(t.dim).child(`Enter ${what}${shown && shown.name ? ` and opens ${(shown.label ?? shown.name).toLowerCase()}` : " and opens the agent alone"}.`))
       .child(h_flex().gap(8).items_center()
         .child(this.button(t, "pp-open", openLabel, true, () => { this.activate(false); cx.notify(); }))
-        .child(this.button(t, "pp-checkout", "Checkout", false, () => { this.activate(true); cx.notify(); })))
-      .child(this.actionButtons(t, cx));
+        .child(this.button(t, "pp-checkout", "Checkout", false, () => { this.activate(true); cx.notify(); })));
   }
 
   /** Under the list: the hints and the layout choice, then the buttons. With the card its buttons are in the card, so
    *  only Hide details and Add project share the hints' row; without it the hints get a row of their own. */
-  listFooter(t, cx, rows) {
-    const p = this.selected()?.p ?? blankProject();
-    const details = this.button(t, "pp-details", this.detail ? "Hide details" : "Show details", false, () => { this.toggleDetail(); cx.notify(); });
-    const backup = this.button(t, "pp-backup", "Import / export…", false, () => { this.openBackup(); cx.notify(); });
-    const add = this.button(t, "pp-add", "Add project", true, () => { this.edit(this.newProject(), null); cx.notify(); });
-    if (this.detail) return h_flex().gap(12).items_center().child(div().flex_1().min_w(0).child(this.footer(t, p, true))).child(backup).child(details).child(add);
-    return v_flex().gap(10)
-      .child(this.footer(t, p, true))
-      .child(h_flex().gap(8).items_center().justify_end()
-        .when(rows.length > 0, (el) => el.child(this.actionButtons(t, cx)))
-        .child(div().flex_1())
-        .child(backup)
-        .child(details)
-        .child(add));
+  /** The row of buttons under the search box: Add project, then what acts on the highlighted project (named at the
+   *  right), then the import/export screen and the card toggle. */
+  renderToolbar(t, cx, rows) {
+    const sel = this.selected();
+    return h_flex().gap(8).items_center().flex_wrap()
+      .child(this.button(t, "pp-add", "Add project", true, () => { this.edit(this.newProject(), null); cx.notify(); }))
+      .when(rows.length > 0, (el) => el.child(this.actionButtons(t, cx)))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).when(Boolean(sel), (e) => e.child(`acts on ${sel.p.name}`)))
+      .child(this.button(t, "pp-backup", "Import / export…", false, () => { this.openBackup(); cx.notify(); }))
+      .child(this.button(t, "pp-details", this.detail ? "Hide details" : "Show details", false, () => { this.toggleDetail(); cx.notify(); }));
+  }
+
+  listFooter(t) {
+    return this.footer(t, this.selected()?.p ?? blankProject(), true);
   }
 
   renderList(t, cx) {
@@ -995,6 +995,7 @@ export default class ProjectPresets extends View {
       .child(h_flex().h(36).flex_none().px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.search).flex_1().h_full().text_size(12.8).text_color(t.foreground))
         .child(div().text_size(11).text_color(t.dim).child(`${rows.length} of ${this.allProjects().length}`)))
+      .child(this.renderToolbar(t, cx, rows))
       .child(this.error ? div().text_size(12).text_color(t.blocked).child(this.error) : div())
       .child(h_flex().gap(14).items_start().min_h(0)
         .child(v_flex().flex_1().min_w(0).gap(6)
@@ -1007,7 +1008,7 @@ export default class ProjectPresets extends View {
       .when(Boolean(this.pendingDelete), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.pendingDelete.template
         ? `Remove the template? Press ${key("d")} again or click Delete. To bring it back later, delete "hideTemplate" from project-presets.json.`
         : `Remove "${this.pendingDelete.name}" from the list? Press ${key("d")} again or click Delete. The folder and its worktrees stay.`)))
-      .child(this.listFooter(t, cx, rows));
+      .child(this.listFooter(t));
   }
 
   renderWorktrees(t, cx) {
@@ -1025,7 +1026,7 @@ export default class ProjectPresets extends View {
       .when(w.locked, (el) => el.child(div().text_size(11).text_color(t.blocked).child("locked")))
       .child(div().text_size(11).text_color(w.merged ? t.done : t.dim).child(w.merged ? "merged" : "unmerged"));
     return v_flex().gap(10).min_h(0)
-      .child(this.title(t, `Worktrees · ${this.target.name}`, "Esc back"))
+      .child(this.title(t, `Worktrees · ${this.target.name}`, `${key("b")} back · Esc closes`))
       .child(h_flex().h(36).flex_none().px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.wtSearch).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.error)))
@@ -1048,7 +1049,7 @@ export default class ProjectPresets extends View {
   renderName(t) {
     const p = this.target;
     return v_flex().gap(10)
-      .child(this.title(t, `New worktree · ${p.name}`, "Esc back"))
+      .child(this.title(t, `New worktree · ${p.name}`, `${key("b")} back · Esc closes`))
       .child(h_flex().h(36).px(10).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.nameInput).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .child(div().text_size(12).text_color(this.error ? t.blocked : t.dim).child(this.error ?? (this.preview ? `branch: ${this.preview}` : "")))
@@ -1134,7 +1135,7 @@ export default class ProjectPresets extends View {
       ],
     };
     return v_flex().gap(0).min_h(0)
-      .child(this.title(t, { add: "Add project", edit: "Edit project", duplicate: "Duplicate project", template: "Edit template", fromTemplate: "New project from the template" }[this.editKind ?? "add"], `Tab next field · ${key("s", "ctrl")} save · Esc back`))
+      .child(this.title(t, { add: "Add project", edit: "Edit project", duplicate: "Duplicate project", template: "Edit template", fromTemplate: "New project from the template" }[this.editKind ?? "add"], `Tab next field · ${key("s", "ctrl")} save · ${key("b")} back · Esc closes`))
       .child(h_flex().pt(10).gap(6)
         .children(SECTIONS.map(([id, name]) => this.button(t, `pp-sec-${id}`, name, this.section === id, () => this.showSection(id)))))
       .child(v_flex().min_h(0).h(430).overflow_y_scrollbar().pr(8).children(sections[this.section]()))

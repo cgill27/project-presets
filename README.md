@@ -40,6 +40,8 @@ When it finishes you land in a new space on the new worktree, with the agent alr
 
 The list is split into **Open now**, **Pinned** and **Everything else** (no headers while you search, or when only one group has projects). Each row starts with an avatar drawn like herdr's sidebar draws a space: a tile in the space's own color with the project's initial (an outline for a project with no open space). Then come the agent icon and, when git details are on, its branch, a `N changed` chip when files are modified, and `N wt` for linked worktrees. The git details run git in every project each time the picker opens; turn them off with `"gitInfo": false` next to `projects` in `~/.config/herdr-app/data/project-presets.json` (the card then also drops its Branch, Changes and Worktrees rows). An open space gets a status stripe on the left edge, and the marker pulses while its agent is working. Typing highlights the letters that matched, and the search box counts matches (`3 of 12`).
 
+**The toolbar** under the search box holds the buttons: Add project, then Duplicate, Worktrees, Edit and Delete for the highlighted project (it says "acts on <name>"), and at the right Import / export… and Show/Hide details. Each has a key, listed in the line at the bottom.
+
 **The detail card** sits beside the list: agent, branch, changes, worktrees, when you last opened the project, and the layout choices as small pictures of their panes (click one, or press **ctrl+alt+L**). It says what Enter will do ("Enter asks for a branch name and opens agent + terminal below") and holds the Open, Checkout, Worktrees, Edit and Delete buttons. Hide it with **ctrl+alt+I** (**⌘⌥I** on macOS) or the Hide details button, if it is too large or not wanted; the choice is remembered. Without it the layout choice sits under the list as text chips and the buttons sit under the list. The popup is 1060 px wide; narrow `overlay.width` in `mod.json` if you never use the card.
 
 **If the picker is slow or the app's CPU jumps when you open it, update herdr-core.** Older versions of herdr-core burned a full CPU core while this popup (and any popup like it) was open; the herdr-core release notes mention the fix. If you can't update, hide the card and set `"gitInfo": false`.
@@ -113,7 +115,7 @@ The last row of the list is a **Template**: a project with no folder and some st
 - **Import: merge** adds the projects in the file that you don't have (same name and folder) and any layouts with new names. Yours are never changed or removed.
 - **Import: replace** makes your list exactly the exported file. It asks you to click again, and first saves your current file as `project-presets.json.bak` next to it.
 
-After an import the screen lists any project whose folder doesn't exist on this machine; press Esc and **alt+e** on it to point it at the right folder. To move to a new machine: Export on the old one, copy the file across, Import on the new one (merge is enough if it's empty).
+After an import the screen lists any project whose folder doesn't exist on this machine; go back (**alt+b**) and press **alt+e** on it to point it at the right folder. To move to a new machine: Export on the old one, copy the file across, Import on the new one (merge is enough if it's empty).
 
 ### Cleaning up worktrees
 
@@ -157,6 +159,8 @@ rsync -a --delete --exclude='*.d.ts' ~/code/project-presets/mods/project-presets
 ## Troubleshooting
 
 Only errors are logged by default. Debug logging is **off** unless you turn it on.
+
+**Esc closes the whole popup instead of going back.** Herdr closes a popup on Esc itself and never passes the key to the mod, so the picker can't use it to go back. Use **alt+b** (**⌘B**) to go back one screen (from the editor, Worktrees, Import / export…), or click Back / Cancel. Esc still closes the picker.
 
 **The shortcut does nothing right after launching herdr-app with no space open.** The window has no pane to hold the keyboard yet, so herdr doesn't see the key. Click once in the window (the "No space open." area), then press the shortcut; once you've had a space open it keeps working. This is herdr-app, not the mod: the shortcut is handled by herdr before the mod runs. Running `herdr-app do mod.open '{"name":"project-presets"}'` from a terminal is another way to open the picker.
 

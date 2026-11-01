@@ -448,6 +448,37 @@ test("the worktree screen lists worktrees with badges and removes ticked ones", 
   assert.ok(!texts(v).includes("ada/merged"));
 });
 
+test("alt+b steps back one screen at a time, and does nothing on the list (herdr closes the popup on Esc itself)", async () => {
+  const { v, cx } = await open([proj("demo", "/r/demo")]);
+  press(v, cx, "b", { alt: true });
+  assert.equal(v.mode, "list");
+  assert.equal(state.closed, 0);
+  press(v, cx, "e", { alt: true });
+  assert.equal(v.mode, "edit");
+  press(v, cx, "b", { alt: true });
+  assert.equal(v.mode, "list");
+  press(v, cx, "x", { alt: true });
+  assert.equal(v.mode, "backup");
+  press(v, cx, "b", { platform: true });
+  assert.equal(v.mode, "list");
+  press(v, cx, "w", { alt: true });
+  await cx.settle();
+  assert.equal(v.mode, "worktrees");
+  press(v, cx, "b", { control: true });
+  assert.equal(v.mode, "list");
+  assert.equal(state.closed, 0);
+});
+
+test("the screens say how to go back, and that Esc closes", async () => {
+  const { v, cx } = await open([proj("demo", "/r/demo")]);
+  press(v, cx, "x", { alt: true });
+  assert.ok(texts(v).includes("alt+b back · Esc closes"));
+  assert.ok(!texts(v).includes("Esc back"));
+  press(v, cx, "b", { alt: true });
+  press(v, cx, "e", { alt: true });
+  assert.ok(texts(v).includes("alt+b back · Esc closes"));
+});
+
 test("Escape steps back one screen at a time and then closes", async () => {
   const { v, cx } = await open([proj("demo", "/r/demo")]);
   press(v, cx, "e", { alt: true });
@@ -1280,4 +1311,38 @@ test("a backup exported here imports on a machine with another home folder", asy
   await b.v.importBackup("merge");
   assert.deepEqual(rowNames(b.v), ["api"]);
   assert.match(savedFile().projects[0].path, /^~\//, "kept as ~, so it resolves under the new home");
+});
+
+// ---------------------------------------------------------------- the toolbar under the search box
+
+const idsIn = (node) => findAll(node, (e) => e.op?.("id")?.[0]?.startsWith?.("pp-")).map((e) => e.op("id")[0]);
+
+test("the actions live in one toolbar under the search box, with the card on or off, and say whom they act on", async () => {
+  for (const detail of [true, false]) {
+    const { v } = await open([proj("alpha", "/r/a"), proj("beta", "/r/b")], undefined, { detail });
+    const t = texts(v);
+    for (const s of ["Add project", "Duplicate", "Worktrees", "Edit", "Delete", "Import / export…", detail ? "Hide details" : "Show details", "acts on alpha"]) assert.ok(t.includes(s), `${detail}: ${s}`);
+    const ids = idsIn(rendered(v));
+    for (const id of ["pp-add", "pp-dup", "pp-wt", "pp-edit", "pp-delete", "pp-backup", "pp-details"]) assert.equal(ids.filter((x) => x === id).length, 1, `${detail}: one ${id}`);
+    assert.ok(ids.indexOf("pp-add") < ids.indexOf("pp-0"), "above the list");
+    v.at = 1;
+    assert.ok(texts(v).includes("acts on beta"));
+  }
+});
+
+test("the card no longer repeats the action buttons, and the template's toolbar has no Worktrees", async () => {
+  const { v } = await open([proj("alpha", "/r/a")], undefined, T);
+  assert.ok(hasId(v, "pp-open") && hasId(v, "pp-checkout"));
+  v.at = rowNames(v).indexOf("Template");
+  const ids = idsIn(rendered(v));
+  assert.ok(ids.includes("pp-use") && ids.includes("pp-edit") && ids.includes("pp-delete") && ids.includes("pp-add"));
+  assert.ok(!ids.includes("pp-wt"), "a template has no worktrees");
+  assert.equal(ids.filter((x) => x === "pp-edit").length, 1);
+});
+
+test("with no projects the toolbar offers Add project and the screens, but no row actions", async () => {
+  const { v } = await open([], undefined, {});
+  const ids = idsIn(rendered(v));
+  assert.ok(ids.includes("pp-add") && ids.includes("pp-backup") && ids.includes("pp-details"));
+  assert.ok(!ids.includes("pp-edit") && !ids.includes("pp-dup"));
 });
