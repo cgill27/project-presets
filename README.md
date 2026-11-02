@@ -135,7 +135,13 @@ Worktrees lists a project's linked worktrees with whether each is merged into th
 
 Copy `mods/project-presets/` to `~/.config/herdr-app/mods/` and merge `keys.json` into `~/.config/herdr-app/keys.json`. It binds `ctrl-alt-p` for Linux and Windows and `cmd-alt-p` for macOS (`cmd-p` is herdr's built-in space picker); change either to any key you like, since the key lives in your own `keys.json`, not in the mod. Inside the picker the shortcuts (add, edit, worktrees, delete) take alt, ctrl or cmd, and every one has a button too. Or ask your agent to install it from this repo; `RECIPE.md` describes the whole mod.
 
-**The clickable Projects button (optional).** The key combo always works. For a button as well, copy `mods/project-presets-launcher/` to `~/.config/herdr-app/mods/` too and add three small blocks to a layout of your own (herdr's shipped layouts are replaced on every start, so clone one first: `herdr-app do layout.clone '{"name":"main","as":"main-launcher"}'`). Each block is `{ "id": "pp-launch-<slot>", "type": "block", "size": { "px": N }, "content": { "mod": "project-presets-launcher", "props": { "slot": "<slot>" } } }`:
+**The clickable Projects button (optional).** The key combo always works. For a button as well:
+
+1. Copy `mods/project-presets-launcher/` to `~/.config/herdr-app/mods/` (next to `project-presets`).
+2. Open the picker and click **Launcher: add to layout** in the toolbar. herdr's own layouts can't be changed by a mod, so this makes a copy of the layout you are using (`<name>-launcher`), adds the button to it and switches to the copy. Your original layout is not touched. It works on macOS, Linux and Windows.
+3. From then on the same toolbar button reads **Launcher: sidebar** and cycles the place (below).
+
+To do step 2 by hand, or to put the blocks in a layout of your own, add three small blocks to a layout of your own (clone a shipped one first: `herdr-app do layout.clone '{"name":"main","as":"main-launcher"}'`). Each block is `{ "id": "pp-launch-<slot>", "type": "block", "size": { "px": N }, "content": { "mod": "project-presets-launcher", "props": { "slot": "<slot>" } } }`:
 
 | slot | id | px | where it goes |
 |---|---|---|---|
@@ -143,7 +149,7 @@ Copy `mods/project-presets/` to `~/.config/herdr-app/mods/` and merge `keys.json
 | `status` | `pp-launch-status` | 96 | beside the status block: wrap `status` in a row (`status` weight 1, then this block) |
 | `tabs` | `pp-launch-tabs` | 36 | beside the tabs block: wrap `tabs` in a row (`tabs` weight 1, then this block) |
 
-Only one shows. Choose it with the **Launcher: sidebar / status bar / tab bar / off** button in the picker's toolbar (it cycles); the choice is kept and the other two hide their blocks. The default is the sidebar, at the foot of the Spaces section. If the toolbar button says **Launcher: not in layout**, the layout you are using (herdr's own, for one) has none of these blocks yet; add them as above and the button works.
+Only one shows. Choose it with the **Launcher: sidebar / status bar / tab bar / off** button in the picker's toolbar (it cycles); the choice is kept and the other two hide their blocks. The default is the sidebar, at the foot of the Spaces section. If the toolbar button says **Launcher: add to layout**, the layout you are using has no launcher blocks yet; click it (step 2).
 
 ![The Projects button at the foot of the Spaces section in the sidebar](docs/screenshots/22-launcher-button.png)
 

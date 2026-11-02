@@ -406,3 +406,17 @@ test("exportFileName puts the local date and time in the name", () => {
   assert.equal(exportFileName(new Date(2027, 0, 9, 0, 5, 0)), "project-presets-config-2027-01-09-000500.json");
   assert.match(exportFileName(), /^project-presets-config-\d{4}-\d\d-\d\d-\d{6}\.json$/);
 });
+
+test("withLauncherBlocks puts the launcher beside spaces, status and tabs, only where they exist and never twice", async () => {
+  const { withLauncherBlocks } = await import("../mods/project-presets/lib.js");
+  const tree = { id: "root", children: [{ id: "side", children: [{ id: "spaces", type: "block", size: { weight: 1 }, min: 90 }] }, { id: "tabs", type: "block", size: { px: 42 } }] };
+  const out = withLauncherBlocks(tree);
+  assert.deepEqual(out.added, ["sidebar", "tabs"], "no status block here, so no status launcher");
+  assert.equal(tree.children[1].id, "tabs", "the original is not changed");
+  const section = out.tree.children[0].children[0];
+  assert.equal(section.id, "spaces-section");
+  assert.equal(section.min, 90);
+  assert.deepEqual(section.children.map((c) => c.id), ["spaces", "pp-launch-sidebar"]);
+  assert.deepEqual(out.tree.children[1].size, { px: 42 });
+  assert.deepEqual(withLauncherBlocks(out.tree).added, [], "already there: nothing added");
+});

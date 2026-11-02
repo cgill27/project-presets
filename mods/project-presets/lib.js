@@ -383,3 +383,33 @@ export function exportFileName(now = new Date()) {
   const n = (v, w = 2) => String(v).padStart(w, "0");
   return `project-presets-config-${now.getFullYear()}-${n(now.getMonth() + 1)}-${n(now.getDate())}-${n(now.getHours())}${n(now.getMinutes())}${n(now.getSeconds())}.json`;
 }
+
+/** The launcher blocks a layout needs (see the project-presets-launcher mod), added to a copy of `tree`: the sidebar one
+ *  under the Spaces list, the status one beside the status bar, the tab one beside the tab bar. Each is added only where
+ *  the layout has the block it goes beside (`spaces`, `status`, `tabs`), and never twice. Returns { tree, added: [slots] }. */
+export function withLauncherBlocks(tree) {
+  const copy = JSON.parse(JSON.stringify(tree ?? null));
+  const added = [];
+  const block = (slot, px) => ({ id: `pp-launch-${slot}`, type: "block", size: { px }, content: { mod: "project-presets-launcher", props: { slot } } });
+  const has = (n, id) => n?.id === id || (n?.children ?? []).some((c) => has(c, id));
+  // Wraps the block `id` in a container of its own kind (the block keeps its content; the container takes its size).
+  const wrap = (n, id, type, slot, px, containerId) => {
+    const kids = n?.children;
+    if (!kids) return false;
+    const i = kids.findIndex((c) => c.id === id);
+    if (i >= 0) {
+      const target = kids[i];
+      const { size, min, max } = target;
+      const inner = { ...target, size: { weight: 1 } };
+      delete inner.min; delete inner.max;
+      kids[i] = { id: containerId, type, size: size ?? { weight: 1 }, ...(min != null ? { min } : {}), ...(max != null ? { max } : {}), ...(target.window_drag ? { window_drag: true } : {}), children: [inner, block(slot, px)] };
+      return true;
+    }
+    return kids.some((c) => wrap(c, id, type, slot, px, containerId));
+  };
+  if (!copy || has(copy, "pp-launch-sidebar") || has(copy, "pp-launch-status") || has(copy, "pp-launch-tabs")) return { tree: copy, added };
+  if (wrap(copy, "spaces", "column", "sidebar", 36, "spaces-section")) added.push("sidebar");
+  if (wrap(copy, "status", "row", "status", 96, "status-row")) added.push("status");
+  if (wrap(copy, "tabs", "row", "tabs", 36, "tabs-row")) added.push("tabs");
+  return { tree: copy, added };
+}

@@ -1386,5 +1386,21 @@ test("on a layout with no launcher blocks the Launcher button never asks herdr t
   assert.equal(v.snap.launcherInLayout, false);
   state.runs.length = 0;
   v.cycleLauncher();
-  assert.deepEqual(state.runs.filter((r) => r.command.startsWith("layout.")), []);
+  assert.deepEqual(state.runs.filter((r) => r.command === "layout.show" || r.command === "layout.hide"), []);
+});
+
+test("with no launcher blocks in the layout, the Launcher button clones the layout, adds them and shows it", async () => {
+  const { v, cx } = await open([proj("alpha", "/r/a")]);
+  setShared("layout", "main");
+  state.layout = { id: "root", children: [{ id: "sidebar", children: [{ id: "spaces", type: "block", size: { weight: 1 } }] }, { id: "work", children: [{ id: "tabs", type: "block", size: { px: 42 } }, { id: "status", type: "block", size: { px: 28 } }] }] };
+  v.refreshSnap();
+  assert.ok(texts(v).includes("Launcher: add to layout"));
+  state.runs.length = 0;
+  v.cycleLauncher();
+  assert.deepEqual(state.runs.map((r) => [r.command, r.args.name, r.args.as]), [["layout.clone", "main", "main-launcher"]]);
+  cx.fire(700);
+  const set = state.runs.find((r) => r.command === "layout.set");
+  assert.ok(set, "the clone gets the blocks");
+  const ids = JSON.stringify(set.args.layout);
+  assert.ok(["pp-launch-sidebar", "pp-launch-status", "pp-launch-tabs"].every((id) => ids.includes(id)));
 });

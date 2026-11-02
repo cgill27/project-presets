@@ -5,12 +5,12 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
-import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home, spaces, readTextFile, writeTextFile, layout } from "herdr";
+import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home, spaces, readTextFile, writeTextFile, layout, layouts } from "herdr";
 import { loadConfig, saveConfig, dataFilePath } from "./config.js";
 import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch, gitSummary, folderExists } from "./git.js";
 import { readDemo } from "./demo.js";
 import { initLog, log, logError } from "./log.js";
-import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, defaultTemplate, duplicateProject, startFromTemplate, expandHome, exportData, parseBackup, mergeProjects, mergeLayouts, exportFileName } from "./lib.js";
+import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, defaultTemplate, duplicateProject, startFromTemplate, expandHome, exportData, parseBackup, mergeProjects, mergeLayouts, exportFileName, withLauncherBlocks } from "./lib.js";
 
 const RECENT = "project-presets.recent";
 const EXPORT_DIR = "~/Downloads";
@@ -291,9 +291,29 @@ export default class ProjectPresets extends View {
     setShared(DETAIL, this.detail);
   }
 
+  /** The shown layout has no launcher blocks (herdr's own layouts have none, and it won't let a mod change those): clones it
+   *  as "<name>-launcher", adds the blocks to the clone and shows it. Your own layouts are never edited. */
+  setupLauncher() {
+    const from = shared("layout") ?? "main";
+    const taken = new Set(layouts());
+    let as = `${from}-launcher`;
+    for (let n = 2; taken.has(as); n++) as = `${from}-launcher-${n}`;
+    log("info", "adding the launcher blocks", { from, as });
+    run("layout.clone", { name: from, as });
+    // The clone shows once herdr has made it; then its tree is ours to change.
+    this.cx.timer.after(700, this.guard("launcher", () => {
+      const { tree, added } = withLauncherBlocks(layout());
+      if (!added.length) return logError("launcher", new Error("no spaces, status or tabs block in this layout to put the button beside"));
+      run("layout.set", { layout: tree });
+      this.snap = { ...this.snap, launcherInLayout: true };
+      this.cx.notify();
+    }));
+  }
+
   /** Moves the clickable open button (see the project-presets-launcher mod) to the next place: sidebar, status bar,
    *  tab bar, then off. The key combo is not affected. */
   cycleLauncher() {
+    if (launcherBlocks().length === 0) return this.setupLauncher();
     const now = shared(LAUNCHER) ?? "sidebar";
     const next = LAUNCHERS[(LAUNCHERS.findIndex(([k]) => k === now) + 1) % LAUNCHERS.length][0];
     setShared(LAUNCHER, next);
@@ -972,7 +992,7 @@ export default class ProjectPresets extends View {
       .when(rows.length > 0, (el) => el.child(this.actionButtons(t, cx)))
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).when(Boolean(sel), (e) => e.child(`acts on ${sel.p.name}`)))
       .child(this.button(t, "pp-backup", "Import / export…", false, () => { this.openBackup(); cx.notify(); }))
-      .child(this.button(t, "pp-launcher", this.snap.launcherInLayout ? `Launcher: ${LAUNCHERS.find(([k]) => k === this.snap.launcher)?.[1]}` : "Launcher: not in layout", false, () => { this.cycleLauncher(); cx.notify(); }))
+      .child(this.button(t, "pp-launcher", this.snap.launcherInLayout ? `Launcher: ${LAUNCHERS.find(([k]) => k === this.snap.launcher)?.[1]}` : "Launcher: add to layout", false, () => { this.cycleLauncher(); cx.notify(); }))
       .child(this.button(t, "pp-details", this.detail ? "Hide details" : "Show details", false, () => { this.toggleDetail(); cx.notify(); }));
   }
 

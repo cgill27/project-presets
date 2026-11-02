@@ -38,6 +38,7 @@ export function reset() {
 export const home = () => { count("home"); return state.home; };
 export const appHome = () => state.appHome;
 export const spaces = () => { count("spaces"); return state.spaces; };
+export const layouts = () => state.layoutNames ?? ["main"];
 export const layout = () => state.layout ?? null; // the shown layout tree; null is a layout without any of our blocks
 export const focused = () => state.focused;
 
