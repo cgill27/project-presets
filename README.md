@@ -135,6 +135,16 @@ Worktrees lists a project's linked worktrees with whether each is merged into th
 
 Copy `mods/project-presets/` to `~/.config/herdr-app/mods/` and merge `keys.json` into `~/.config/herdr-app/keys.json`. It binds `ctrl-alt-p` for Linux and Windows and `cmd-alt-p` for macOS (`cmd-p` is herdr's built-in space picker); change either to any key you like, since the key lives in your own `keys.json`, not in the mod. Inside the picker the shortcuts (add, edit, worktrees, delete) take alt, ctrl or cmd, and every one has a button too. Or ask your agent to install it from this repo; `RECIPE.md` describes the whole mod.
 
+**The clickable Projects button (optional).** The key combo always works. For a button as well, copy `mods/project-presets-launcher/` to `~/.config/herdr-app/mods/` too and add three small blocks to a layout of your own (herdr's shipped layouts are replaced on every start, so clone one first: `herdr-app do layout.clone '{"name":"main","as":"main-launcher"}'`). Each block is `{ "id": "pp-launch-<slot>", "type": "block", "size": { "px": N }, "content": { "mod": "project-presets-launcher", "props": { "slot": "<slot>" } } }`:
+
+| slot | id | px | where it goes |
+|---|---|---|---|
+| `sidebar` | `pp-launch-sidebar` | 36 | in the sidebar column, just above `sidebar-footer` |
+| `status` | `pp-launch-status` | 96 | beside the status block: wrap `status` in a row (`status` weight 1, then this block) |
+| `tabs` | `pp-launch-tabs` | 36 | beside the tabs block: wrap `tabs` in a row (`tabs` weight 1, then this block) |
+
+Only one shows. Choose it with the **Launcher: tab bar / status bar / sidebar / off** button in the picker's toolbar (it cycles); the choice is kept and the other two hide their blocks. The default is the tab bar.
+
 Projects live in `~/.config/herdr-app/data/project-presets.json`; add them with the Add project button.
 
 ## Updating

@@ -14,6 +14,8 @@ import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayou
 
 const RECENT = "project-presets.recent";
 const EXPORT_DIR = "~/Downloads";
+const LAUNCHER = "project-presets.launcher"; // where the clickable open button sits: tabs, status, sidebar or off
+const LAUNCHERS = [["tabs", "tab bar"], ["status", "status bar"], ["sidebar", "sidebar"], ["off", "off"]];
 const DETAIL = "project-presets.detail"; // false: hide the detail card (kept between sessions)
 // Shortcut hints: ⌘ on macOS (Option+letter types a character there), alt elsewhere.
 // The platform, copied from herdr with the rest of the snapshot (see takeSnapshot).
@@ -278,6 +280,15 @@ export default class ProjectPresets extends View {
   toggleDetail() {
     this.detail = !this.detail;
     setShared(DETAIL, this.detail);
+  }
+
+  /** Moves the clickable open button (see the project-presets-launcher mod) to the next place: tab bar, status bar,
+   *  sidebar, then off. The key combo is not affected. */
+  cycleLauncher() {
+    const now = shared(LAUNCHER) ?? "tabs";
+    const next = LAUNCHERS[(LAUNCHERS.findIndex(([k]) => k === now) + 1) % LAUNCHERS.length][0];
+    setShared(LAUNCHER, next);
+    for (const [k] of LAUNCHERS) if (k !== "off") run(k === next ? "layout.show" : "layout.hide", { id: `pp-launch-${k}` });
   }
 
   /** ctrl+alt+L: the next layout for `p`'s launch (none, then each layout). */
@@ -948,6 +959,7 @@ export default class ProjectPresets extends View {
       .when(rows.length > 0, (el) => el.child(this.actionButtons(t, cx)))
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).when(Boolean(sel), (e) => e.child(`acts on ${sel.p.name}`)))
       .child(this.button(t, "pp-backup", "Import / export…", false, () => { this.openBackup(); cx.notify(); }))
+      .child(this.button(t, "pp-launcher", `Launcher: ${LAUNCHERS.find(([k]) => k === (shared(LAUNCHER) ?? "tabs"))?.[1]}`, false, () => { this.cycleLauncher(); cx.notify(); }))
       .child(this.button(t, "pp-details", this.detail ? "Hide details" : "Show details", false, () => { this.toggleDetail(); cx.notify(); }));
   }
 
