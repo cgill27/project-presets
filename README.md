@@ -131,6 +131,12 @@ Worktrees lists a project's linked worktrees with whether each is merged into th
 |---|---|---|
 | ![Worktrees](docs/screenshots/12-worktrees.png) | ![Ticked](docs/screenshots/13-worktrees-ticked.png) | ![Confirm](docs/screenshots/14-worktrees-confirm.png) |
 
+## Requirements
+
+- **Herdr:** `herdr-app` and `herdr-core` (`hc`) installed and running. Built and tested with `herdr-app 0.1.12` and `hc 0.1.17`. With an `hc` older than 0.1.16 the picker can use a full CPU core (see Troubleshooting).
+- **git** 2.7 or newer, since worktrees are used (tested with 2.56). Each project must be a local git checkout.
+- **The agents you use**, on your `PATH`: the picker starts them by command (`claude`, `codex`, `opencode`, `hermes`, `pi`, or any other you set), and `hc` types prompts into them. A project whose agent command is missing opens a space but the agent does not start. Setup commands and extra tabs run in your shell, so anything they call must be installed too.
+
 ## Install
 
 Copy `mods/project-presets/` to `~/.config/herdr-app/mods/` and merge `keys.json` into `~/.config/herdr-app/keys.json`. It binds `ctrl-alt-p` for Linux and Windows and `cmd-alt-p` for macOS (`cmd-p` is herdr's built-in space picker); change either to any key you like, since the key lives in your own `keys.json`, not in the mod. Inside the picker the shortcuts (add, edit, worktrees, delete) take alt, ctrl or cmd, and every one has a button too. Or ask your agent to install it from this repo; `RECIPE.md` describes the whole mod.
@@ -138,7 +144,7 @@ Copy `mods/project-presets/` to `~/.config/herdr-app/mods/` and merge `keys.json
 **The clickable Projects button (optional).** The key combo always works. For a button as well:
 
 1. Copy `mods/project-presets-launcher/` to `~/.config/herdr-app/mods/` (next to `project-presets`).
-2. Open the picker and click **Launcher: add to layout** in the toolbar. herdr's own layouts can't be changed by a mod, so this makes a copy of the layout you are using (`<name>-launcher`), adds the button to it and switches to the copy. Your original layout is not touched. It works on macOS, Linux and Windows.
+2. Open the picker and click **Launcher: add to layout** in the toolbar. herdr's own layouts can't be changed by a mod, so this makes a copy of the layout you are using (`<name>-launcher`), adds the button to it and switches to the copy. Your original layout is not touched. If step 1 was skipped, the picker says so and changes nothing. It works on macOS, Linux and Windows.
 3. From then on the same toolbar button reads **Launcher: sidebar** and cycles the place (below).
 
 To do step 2 by hand, or to put the blocks in a layout of your own, add three small blocks to a layout of your own (clone a shipped one first: `herdr-app do layout.clone '{"name":"main","as":"main-launcher"}'`). Each block is `{ "id": "pp-launch-<slot>", "type": "block", "size": { "px": N }, "content": { "mod": "project-presets-launcher", "props": { "slot": "<slot>" } } }`:
@@ -164,6 +170,7 @@ Herdr doesn't update community mods for you, so how you update depends on how yo
 ```sh
 git clone https://github.com/cgill27/project-presets.git ~/code/project-presets
 ln -s ~/code/project-presets/mods/project-presets ~/.config/herdr-app/mods/project-presets
+ln -s ~/code/project-presets/mods/project-presets-launcher ~/.config/herdr-app/mods/project-presets-launcher   # only if you use the Projects button
 ```
 
 Then update with a pull. Herdr reloads a mod as soon as its files change, so there is nothing to restart:
@@ -176,6 +183,8 @@ git -C ~/code/project-presets pull --ff-only
 
 ```sh
 rsync -a --delete --exclude='*.d.ts' ~/code/project-presets/mods/project-presets/ ~/.config/herdr-app/mods/project-presets/
+# only if you use the Projects button, update its mod too:
+rsync -a --delete --exclude='*.d.ts' ~/code/project-presets/mods/project-presets-launcher/ ~/.config/herdr-app/mods/project-presets-launcher/
 ```
 
 **Check the release notes.** The key bindings in `keys.json` are merged into your own `~/.config/herdr-app/keys.json`, so an update never changes them. When a release changes a key, the notes say so; edit your file by hand.

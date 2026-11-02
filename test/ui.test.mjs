@@ -1398,6 +1398,13 @@ test("with no launcher blocks in the layout, the Launcher button writes a copy w
   state.runs.length = 0;
   v.cycleLauncher();
   await cx.settle();
+  assert.match(v.error, /launcher mod isn't installed/, "without the mod's folder the picker says what to copy and writes nothing");
+  assert.ok(!existsSync(`${state.appHome}/layouts/main-launcher.json`));
+  assert.deepEqual(state.runs, []);
+  mkdirSync(`${state.appHome}/mods/project-presets-launcher`, { recursive: true });
+  writeFileSync(`${state.appHome}/mods/project-presets-launcher/main.js`, "");
+  v.cycleLauncher();
+  await cx.settle();
   const file = `${state.appHome}/layouts/main-launcher.json`;
   assert.ok(existsSync(file), "the copy is written as a file, with no clone to wait for");
   const text = readFileSync(file, "utf8");

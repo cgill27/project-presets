@@ -303,6 +303,9 @@ export default class ProjectPresets extends View {
     log("info", "adding the launcher blocks", { from, as, added });
     if (!added.length) return this.fail("launcher", new Error("this layout has no spaces, status or tabs block to put the button beside"));
     return this.guard("launcher", async () => {
+      // The blocks draw with the project-presets-launcher mod; without its folder they would be empty and herdr would log errors.
+      const modDir = `${appHome()}/mods/project-presets-launcher`;
+      if ((await readTextFile(`${modDir}/main.js`)) == null) throw new Error(`the launcher mod isn't installed. Copy mods/project-presets-launcher/ from the repo to ${shortHome(modDir, homeOf())}, then click this again`);
       await writeTextFile(`${appHome()}/layouts/${as}.json`, JSON.stringify(tree, null, 2) + "\n", null);
       run("layout.switch", { name: as });
       this.snap = { ...this.snap, launcherInLayout: true };
