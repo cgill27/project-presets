@@ -139,11 +139,13 @@ Copy `mods/project-presets/` to `~/.config/herdr-app/mods/` and merge `keys.json
 
 | slot | id | px | where it goes |
 |---|---|---|---|
-| `sidebar` | `pp-launch-sidebar` | 36 | in the sidebar column, just above `sidebar-footer` |
+| `sidebar` | `pp-launch-sidebar` | 36 | at the foot of the Spaces section: wrap `spaces` in a column (`spaces` weight 1, then this block). Or put it in the sidebar column just above `sidebar-footer` for the bottom of the sidebar |
 | `status` | `pp-launch-status` | 96 | beside the status block: wrap `status` in a row (`status` weight 1, then this block) |
 | `tabs` | `pp-launch-tabs` | 36 | beside the tabs block: wrap `tabs` in a row (`tabs` weight 1, then this block) |
 
-Only one shows. Choose it with the **Launcher: tab bar / status bar / sidebar / off** button in the picker's toolbar (it cycles); the choice is kept and the other two hide their blocks. The default is the tab bar.
+Only one shows. Choose it with the **Launcher: sidebar / status bar / tab bar / off** button in the picker's toolbar (it cycles); the choice is kept and the other two hide their blocks. The default is the sidebar, at the foot of the Spaces section. If the toolbar button says **Launcher: not in layout**, the layout you are using (herdr's own, for one) has none of these blocks yet; add them as above and the button works.
+
+![The Projects button at the foot of the Spaces section in the sidebar](docs/screenshots/22-launcher-button.png)
 
 Projects live in `~/.config/herdr-app/data/project-presets.json`; add them with the Add project button.
 

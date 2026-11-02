@@ -1364,3 +1364,27 @@ test("with no projects the toolbar offers Add project and the screens, but no ro
   assert.ok(ids.includes("pp-add") && ids.includes("pp-backup") && ids.includes("pp-details"));
   assert.ok(!ids.includes("pp-edit") && !ids.includes("pp-dup"));
 });
+
+test("the Launcher button cycles sidebar, status bar, tab bar, off, and only touches blocks the layout has", async () => {
+  const { v } = await open([proj("alpha", "/r/a")]);
+  state.layout = { id: "root", children: [{ id: "pp-launch-sidebar" }, { id: "pp-launch-tabs" }] }; // no status block
+  v.refreshSnap();
+  assert.equal(v.snap.launcher, "sidebar", "the sidebar is the default");
+  state.runs.length = 0;
+  v.cycleLauncher(); // → status bar: it has no block here
+  assert.equal(v.snap.launcher, "status");
+  assert.deepEqual(state.runs.map((r) => [r.command, r.args.id]), [["layout.hide", "pp-launch-sidebar"], ["layout.hide", "pp-launch-tabs"]]);
+  state.runs.length = 0;
+  v.cycleLauncher(); // → tab bar
+  assert.deepEqual(state.runs.map((r) => [r.command, r.args.id]), [["layout.hide", "pp-launch-sidebar"], ["layout.show", "pp-launch-tabs"]]);
+});
+
+test("on a layout with no launcher blocks the Launcher button never asks herdr to show or hide one", async () => {
+  const { v } = await open([proj("alpha", "/r/a")]);
+  state.layout = { id: "root", children: [{ id: "sidebar" }] };
+  v.refreshSnap();
+  assert.equal(v.snap.launcherInLayout, false);
+  state.runs.length = 0;
+  v.cycleLauncher();
+  assert.deepEqual(state.runs.filter((r) => r.command.startsWith("layout.")), []);
+});

@@ -5,7 +5,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
-import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home, spaces, readTextFile, writeTextFile } from "herdr";
+import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home, spaces, readTextFile, writeTextFile, layout } from "herdr";
 import { loadConfig, saveConfig, dataFilePath } from "./config.js";
 import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch, gitSummary, folderExists } from "./git.js";
 import { readDemo } from "./demo.js";
@@ -14,8 +14,15 @@ import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayou
 
 const RECENT = "project-presets.recent";
 const EXPORT_DIR = "~/Downloads";
-const LAUNCHER = "project-presets.launcher"; // where the clickable open button sits: tabs, status, sidebar or off
-const LAUNCHERS = [["tabs", "tab bar"], ["status", "status bar"], ["sidebar", "sidebar"], ["off", "off"]];
+const LAUNCHER = "project-presets.launcher"; // where the clickable open button sits: sidebar (the default), status, tabs or off
+const LAUNCHERS = [["sidebar", "sidebar"], ["status", "status bar"], ["tabs", "tab bar"], ["off", "off"]];
+/** The launcher blocks the shown layout has (ids "pp-launch-<slot>"). A layout without them, such as herdr's own, has none. */
+const launcherBlocks = () => {
+  const found = [];
+  const walk = (n) => { if (n?.id?.startsWith("pp-launch-")) found.push(n.id); (n?.children ?? []).forEach(walk); };
+  walk(layout());
+  return found;
+};
 const DETAIL = "project-presets.detail"; // false: hide the detail card (kept between sessions)
 // Shortcut hints: ⌘ on macOS (Option+letter types a character there), alt elsewhere.
 // The platform, copied from herdr with the rest of the snapshot (see takeSnapshot).
@@ -239,6 +246,8 @@ export default class ProjectPresets extends View {
       colors: colors ? { ...colors } : colors,
       recent: { ...(shared(RECENT) ?? {}) },
       platform: window()?.platform ?? "",
+      launcher: shared(LAUNCHER) ?? "sidebar",
+      launcherInLayout: launcherBlocks().length > 0,
     };
   }
 
@@ -282,13 +291,17 @@ export default class ProjectPresets extends View {
     setShared(DETAIL, this.detail);
   }
 
-  /** Moves the clickable open button (see the project-presets-launcher mod) to the next place: tab bar, status bar,
-   *  sidebar, then off. The key combo is not affected. */
+  /** Moves the clickable open button (see the project-presets-launcher mod) to the next place: sidebar, status bar,
+   *  tab bar, then off. The key combo is not affected. */
   cycleLauncher() {
-    const now = shared(LAUNCHER) ?? "tabs";
+    const now = shared(LAUNCHER) ?? "sidebar";
     const next = LAUNCHERS[(LAUNCHERS.findIndex(([k]) => k === now) + 1) % LAUNCHERS.length][0];
     setShared(LAUNCHER, next);
-    for (const [k] of LAUNCHERS) if (k !== "off") run(k === next ? "layout.show" : "layout.hide", { id: `pp-launch-${k}` });
+    this.snap = { ...this.snap, launcher: next }; // the toolbar label changes at once, not at the next snapshot
+    // Only the blocks this layout has: on a layout without them (see "The clickable Projects button" in the README) there is
+    // nothing to show or hide, and asking would fail.
+    const have = launcherBlocks();
+    for (const [k] of LAUNCHERS) if (k !== "off" && have.includes(`pp-launch-${k}`)) run(k === next ? "layout.show" : "layout.hide", { id: `pp-launch-${k}` });
   }
 
   /** ctrl+alt+L: the next layout for `p`'s launch (none, then each layout). */
@@ -959,7 +972,7 @@ export default class ProjectPresets extends View {
       .when(rows.length > 0, (el) => el.child(this.actionButtons(t, cx)))
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).when(Boolean(sel), (e) => e.child(`acts on ${sel.p.name}`)))
       .child(this.button(t, "pp-backup", "Import / export…", false, () => { this.openBackup(); cx.notify(); }))
-      .child(this.button(t, "pp-launcher", `Launcher: ${LAUNCHERS.find(([k]) => k === (shared(LAUNCHER) ?? "tabs"))?.[1]}`, false, () => { this.cycleLauncher(); cx.notify(); }))
+      .child(this.button(t, "pp-launcher", this.snap.launcherInLayout ? `Launcher: ${LAUNCHERS.find(([k]) => k === this.snap.launcher)?.[1]}` : "Launcher: not in layout", false, () => { this.cycleLauncher(); cx.notify(); }))
       .child(this.button(t, "pp-details", this.detail ? "Hide details" : "Show details", false, () => { this.toggleDetail(); cx.notify(); }));
   }
 

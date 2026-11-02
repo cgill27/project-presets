@@ -13,8 +13,8 @@ const open = () => run("mod.open", { name: "project-presets" });
 export default class ProjectPresetsLauncher extends View {
   render() {
     const t = theme();
-    const slot = props()?.slot ?? "tabs";
-    const chosen = shared(SETTING) ?? "tabs";
+    const slot = props()?.slot ?? "sidebar";
+    const chosen = shared(SETTING) ?? "sidebar";
     if (chosen !== slot) {
       // Not this one's turn: close the block (the picker opens it again when it is chosen).
       if (!this.hid) { this.hid = true; run("layout.hide", { id: BLOCK[slot] }); }
