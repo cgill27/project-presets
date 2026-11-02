@@ -5,7 +5,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, VirtualListScrollHandle, v_virtual_list } from "gpui-base";
-import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home, spaces, readTextFile, writeTextFile, layout, layouts } from "herdr";
+import { knownAgents, window, theme, props, closeOverlay, run, pickFolder, shared, setShared, home, spaces, readTextFile, writeTextFile, layout, layouts, appHome } from "herdr";
 import { loadConfig, saveConfig, dataFilePath } from "./config.js";
 import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch, gitSummary, folderExists } from "./git.js";
 import { readDemo } from "./demo.js";
@@ -291,23 +291,23 @@ export default class ProjectPresets extends View {
     setShared(DETAIL, this.detail);
   }
 
-  /** The shown layout has no launcher blocks (herdr's own layouts have none, and it won't let a mod change those): clones it
-   *  as "<name>-launcher", adds the blocks to the clone and shows it. Your own layouts are never edited. */
+  /** The shown layout has no launcher blocks (herdr's own layouts have none, and it won't let a mod change those): writes a
+   *  copy of the shown layout with the blocks to layouts/<name>-launcher.json and switches to it. The copy is built from the
+   *  tree in hand and written as a file, so nothing waits on herdr finishing a clone. Your own layouts are never edited. */
   setupLauncher() {
     const from = shared("layout") ?? "main";
     const taken = new Set(layouts());
     let as = `${from}-launcher`;
     for (let n = 2; taken.has(as); n++) as = `${from}-launcher-${n}`;
-    log("info", "adding the launcher blocks", { from, as });
-    run("layout.clone", { name: from, as });
-    // The clone shows once herdr has made it; then its tree is ours to change.
-    this.cx.timer.after(700, this.guard("launcher", () => {
-      const { tree, added } = withLauncherBlocks(layout());
-      if (!added.length) return logError("launcher", new Error("no spaces, status or tabs block in this layout to put the button beside"));
-      run("layout.set", { layout: tree });
+    const { tree, added } = withLauncherBlocks(layout());
+    log("info", "adding the launcher blocks", { from, as, added });
+    if (!added.length) return this.fail("launcher", new Error("this layout has no spaces, status or tabs block to put the button beside"));
+    return this.guard("launcher", async () => {
+      await writeTextFile(`${appHome()}/layouts/${as}.json`, JSON.stringify(tree, null, 2) + "\n", null);
+      run("layout.switch", { name: as });
       this.snap = { ...this.snap, launcherInLayout: true };
       this.cx.notify();
-    }));
+    })();
   }
 
   /** Moves the clickable open button (see the project-presets-launcher mod) to the next place: sidebar, status bar,
