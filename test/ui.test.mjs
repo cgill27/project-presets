@@ -1136,6 +1136,9 @@ test("editing the template saves it as a real entry; Add project then starts fro
   fieldOf(v, "agent").set_value("hermes");
   fieldOf(v, "group").set_value("starter");
   await v.save(cx);
+  assert.deepEqual(v.applyAsk.changes.map((c) => c.label), ["Agent"], "the agent changed and there is another project, so Save asks first (group is not a template setting)");
+  assert.equal(existsSync(dataFile()) && JSON.parse(readFileSync(dataFile(), "utf8")).projects.some((p) => p.template), false, "nothing is saved until it is answered");
+  await v.save(cx, false);
   assert.equal(v.error, null, "no folder needed for a template");
   const saved = JSON.parse(readFileSync(dataFile(), "utf8")).projects;
   const tpl = saved.find((p) => p.template);
@@ -1410,4 +1413,64 @@ test("with no launcher blocks in the layout, the Launcher button writes a copy w
   const text = readFileSync(file, "utf8");
   assert.ok(["pp-launch-sidebar", "pp-launch-status", "pp-launch-tabs"].every((id) => text.includes(id)));
   assert.deepEqual(state.runs.map((r) => [r.command, r.args.name]), [["layout.switch", "main-launcher"]], "no layout.clone and no layout.set");
+});
+
+/** A picker with two projects and a saved template, the editor open on the template. */
+async function editTemplate() {
+  const tpl = { ...proj("Template", ""), template: true };
+  tpl.startup.agent = "claude"; tpl.startup.layout = "agent-terminal"; tpl.worktree.mode = "ask";
+  const a = proj("api", "/r/api"); a.startup.agent = "codex"; a.group = "work"; a.pinned = true; a.worktree.mode = "never";
+  const b = proj("web", "/r/web"); b.startup.layout = "";
+  const { v, cx } = await open([a, b, tpl], undefined, T);
+  v.at = rowNames(v).indexOf("Template");
+  press(v, cx, "e", { alt: true });
+  return { v, cx };
+}
+const savedProjects = () => JSON.parse(readFileSync(dataFile(), "utf8")).projects;
+
+test("saving a changed template asks; Apply to all writes only the changed settings to every other project", async () => {
+  const { v, cx } = await editTemplate();
+  fieldOf(v, "layout").set_value("agent-side-terminal");
+  await v.save(cx);
+  assert.deepEqual(v.applyAsk.changes.map((c) => c.label), ["Pane layout"]);
+  assert.equal(v.applyAsk.count, 2);
+  assert.ok(hasId(v, "pp-apply-all") && hasId(v, "pp-apply-none") && hasId(v, "pp-apply-back"));
+  await v.save(cx); // pressing Save again while it asks does nothing
+  assert.equal(v.mode, "edit");
+  await v.save(cx, true);
+  assert.equal(v.mode, "list");
+  const [api, web, tpl] = savedProjects();
+  assert.equal(api.startup.layout, "agent-side-terminal");
+  assert.equal(web.startup.layout, "agent-side-terminal");
+  assert.equal(tpl.startup.layout, "agent-side-terminal");
+  assert.deepEqual([api.startup.agent, api.group, api.pinned, api.worktree.mode, api.path], ["codex", "work", true, "never", "/r/api"], "everything the template did not change stays");
+});
+
+test("Only the template saves the template and leaves the other projects alone; Keep editing goes back", async () => {
+  const { v, cx } = await editTemplate();
+  fieldOf(v, "agent").set_value("hermes");
+  await v.save(cx);
+  v.applyAsk = null; // Keep editing
+  assert.equal(v.mode, "edit");
+  await v.save(cx);
+  await v.save(cx, false);
+  const [api, web, tpl] = savedProjects();
+  assert.equal(tpl.startup.agent, "hermes");
+  assert.equal(api.startup.agent, "codex");
+  assert.equal(web.startup.layout, "");
+});
+
+test("saving a template asks nothing when it did not change or when there are no other projects", async () => {
+  const { v, cx } = await editTemplate();
+  fieldOf(v, "group").set_value("only-the-group"); // not a template setting
+  await v.save(cx);
+  assert.equal(v.applyAsk, null);
+  assert.equal(v.mode, "list");
+  const alone = await open([], undefined, T);
+  alone.v.at = rowNames(alone.v).indexOf("Template");
+  press(alone.v, alone.cx, "e", { alt: true });
+  fieldOf(alone.v, "agent").set_value("pi");
+  await alone.v.save(alone.cx);
+  assert.equal(alone.v.applyAsk, null, "no other project to apply it to");
+  assert.equal(alone.v.mode, "list");
 });

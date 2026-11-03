@@ -420,3 +420,21 @@ test("withLauncherBlocks puts the launcher beside spaces, status and tabs, only 
   assert.deepEqual(out.tree.children[1].size, { px: 42 });
   assert.deepEqual(withLauncherBlocks(out.tree).added, [], "already there: nothing added");
 });
+
+test("templateChanges lists the settings that differ; applyTemplateChanges writes just those to non-template projects", async () => {
+  const { templateChanges, applyTemplateChanges, defaultTemplate, normalize } = await import("../mods/project-presets/lib.js");
+  const before = defaultTemplate();
+  const after = JSON.parse(JSON.stringify(before));
+  after.startup.agent = "codex"; after.startup.setup = ["npm ci"]; after.git.base = "develop"; after.group = "ignored"; after.name = "Renamed";
+  const changes = templateChanges(before, after);
+  assert.deepEqual(changes.map((c) => c.label), ["Agent", "Setup commands", "Base branch"]);
+  assert.deepEqual(templateChanges(before, before), []);
+  const p = normalize({ name: "api", path: "/r/api", group: "work", pinned: true, startup: { agent: "claude", layout: "x", tabs: ["htop"] } });
+  const [out, tpl] = applyTemplateChanges([p, after], changes);
+  assert.deepEqual([out.startup.agent, out.startup.setup, out.git.base], ["codex", ["npm ci"], "develop"]);
+  assert.deepEqual([out.name, out.group, out.pinned, out.startup.layout, out.startup.tabs], ["api", "work", true, "x", ["htop"]], "the rest is kept");
+  assert.equal(tpl, after, "templates are not rewritten");
+  assert.equal(p.startup.agent, "claude", "the input is not changed");
+  out.startup.setup.push("x");
+  assert.deepEqual(changes[1].value, ["npm ci"], "values are copied, not shared");
+});

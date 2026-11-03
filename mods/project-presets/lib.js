@@ -304,6 +304,51 @@ export function duplicateProject(p, takenNames) {
   return normalize(copy);
 }
 
+/** The settings a template carries to the projects made from it (not the name, folder, group or pin). Each is a path into
+ *  the project and the label shown when asking whether to apply a change. */
+export const TEMPLATE_SETTINGS = [
+  [["startup", "agent"], "Agent"],
+  [["startup", "args"], "Agent arguments"],
+  [["startup", "prompt"], "Prompt"],
+  [["startup", "promptMode"], "Prompt mode"],
+  [["startup", "layout"], "Pane layout"],
+  [["startup", "setup"], "Setup commands"],
+  [["startup", "tabs"], "Extra tabs"],
+  [["worktree", "mode"], "Worktree mode"],
+  [["worktree", "branchTemplate"], "Branch name template"],
+  [["worktree", "root"], "Worktree folder"],
+  [["worktree", "spaceName"], "Space name"],
+  [["worktree", "repoSpace"], "Open the repo's space first"],
+  [["git", "fetch"], "Fetch first"],
+  [["git", "fastForward"], "Fast-forward checkout"],
+  [["git", "remote"], "Remote"],
+  [["git", "base"], "Base branch"],
+];
+
+const valueAt = (p, path) => path.reduce((o, k) => o?.[k], p);
+
+/** What a save changed in a template: [{ path, label, value }] for each setting whose value differs from `before`. */
+export function templateChanges(before, after) {
+  return TEMPLATE_SETTINGS
+    .filter(([path]) => JSON.stringify(valueAt(before, path)) !== JSON.stringify(valueAt(after, path)))
+    .map(([path, label]) => ({ path, label, value: JSON.parse(JSON.stringify(valueAt(after, path) ?? null)) }));
+}
+
+/** `projects` with `changes` applied to every project that is not a template: only the settings that changed, so each
+ *  project keeps its own name, folder, group, pin and every setting the template did not touch. */
+export function applyTemplateChanges(projects, changes) {
+  return projects.map((p) => {
+    if (p.template) return p;
+    const copy = JSON.parse(JSON.stringify(p));
+    for (const { path, value } of changes) {
+      let o = copy;
+      for (const k of path.slice(0, -1)) o = o[k] ??= {};
+      o[path[path.length - 1]] = JSON.parse(JSON.stringify(value));
+    }
+    return copy;
+  });
+}
+
 /** A blank project that starts with the template's settings (agent, layout, worktree and git settings, group) but not its
  *  name or folder. */
 export function startFromTemplate(template) {

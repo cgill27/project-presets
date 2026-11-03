@@ -10,7 +10,7 @@ import { loadConfig, saveConfig, dataFilePath } from "./config.js";
 import { inspect, projectFolder, previewBranch, createWorktree, worktreeSpaceName, listWorktrees, removeWorktree, prepareMain, runSetup, findSpace, launch, gitSummary, folderExists } from "./git.js";
 import { readDemo } from "./demo.js";
 import { initLog, log, logError } from "./log.js";
-import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, defaultTemplate, duplicateProject, startFromTemplate, expandHome, exportData, parseBackup, mergeProjects, mergeLayouts, exportFileName, withLauncherBlocks } from "./lib.js";
+import { fuzzy, blankProject, shortHome, splitList, joinList, basename, allLayouts, nextLayout, layoutPlan, fuzzyPositions, highlightRuns, commandName, agentOptions, ago, listItems, layoutRects, enterAction, spaceColor, defaultTemplate, duplicateProject, startFromTemplate, expandHome, exportData, parseBackup, mergeProjects, mergeLayouts, exportFileName, withLauncherBlocks, templateChanges, applyTemplateChanges } from "./lib.js";
 
 const RECENT = "project-presets.recent";
 const EXPORT_DIR = "~/Downloads";
@@ -201,6 +201,8 @@ export default class ProjectPresets extends View {
       this.edit(project ?? blankProject(), project ? this.projects.indexOf(project) : null);
       if (d.section) this.showSection(d.section);
       if (d.focus) this.fields.find(([k]) => k === d.focus)?.[1].focus();
+      // On a template: change the agent and press Save, which shows the "apply to your projects?" question.
+      if (d.ask && project?.template) { this.fields.find(([k]) => k === "agent")?.[1].set_value?.(d.ask); this.save(this.cx); }
     } else if (d.view === "duplicate") this.duplicateSelected(); // a copy of the project, or a new project from the template when that row is picked
     else if (d.view === "backup") {
       this.openBackup();
@@ -484,6 +486,8 @@ export default class ProjectPresets extends View {
     this.index = index; // null: new
     this.editKind = kind ?? (project.template ? "template" : index == null ? "add" : "edit");
     this.draft = JSON.parse(JSON.stringify(project));
+    this.draftBefore = JSON.parse(JSON.stringify(project)); // what a template looked like when the editor opened
+    this.applyAsk = null; // set when saving a template asks whether to apply its changes to the existing projects
     this.error = null;
     this.confirmDelete = false;
     this.fields = TEXT.map(([key, , get]) => {
@@ -513,7 +517,10 @@ export default class ProjectPresets extends View {
     cx.notify();
   }
 
-  async save(cx) {
+  /** `applyToAll`: undefined on the first Save (a template with changes and other projects asks first); true applies the
+   *  changed settings to every project, false saves the template alone. */
+  async save(cx, applyToAll) {
+    if (this.applyAsk && applyToAll === undefined) return; // the question is showing: answer it with its buttons
     try {
       for (const [key, state] of this.fields) TEXT.find(([k]) => k === key)[3](this.draft, key === "path" ? state.value() : state.value().trim());
       const d = this.draft;
@@ -522,8 +529,18 @@ export default class ProjectPresets extends View {
         if (!d.path.trim()) throw new Error("Choose the project's folder: Browse… or type its path");
         await inspect(projectFolder(d));
       }
-      const list = [...this.projects];
+      let list = [...this.projects];
       if (this.index == null) list.push(d); else list[this.index] = d;
+      if (d.template) {
+        const changes = templateChanges(this.draftBefore, d);
+        const others = this.projects.filter((p) => !p.template).length;
+        if (applyToAll === undefined && changes.length && others) {
+          this.applyAsk = { changes, count: others };
+          return cx.notify();
+        }
+        if (applyToAll && changes.length) list = applyTemplateChanges(list, changes);
+      }
+      this.applyAsk = null;
       this.raw = await saveConfig(list, this.raw);
       this.projects = list;
       this.syncTemplate();
@@ -793,6 +810,7 @@ export default class ProjectPresets extends View {
     if (k === "escape" || back) {
       if (this.mode === "list") { if (back) return; this.dismiss(); }
       else if (this.mode === "busy" && !this.error) return;
+      else if (this.mode === "edit" && this.applyAsk) this.applyAsk = null;
       else { this.mode = "list"; this.error = null; this.search.focus(); }
     } else if (this.mode === "list") {
       const n = this.rows().length;
@@ -1129,6 +1147,19 @@ export default class ProjectPresets extends View {
       .when(Boolean(this.error), (el) => el.child(div().text_size(12.5).text_color(t.blocked).child(this.error)));
   }
 
+  /** Shown under the editor after Save on a template with changes: the three ways to go on. */
+  renderApplyAsk(t, cx) {
+    const { changes, count } = this.applyAsk;
+    const plural = count === 1 ? "project" : "projects";
+    return v_flex().pt(10).gap(8)
+      .child(div().text_size(12.5).text_color(t.foreground).child(`You changed: ${changes.map((c) => c.label).join(", ")}. Apply ${changes.length === 1 ? "it" : "them"} to your ${count} existing ${plural} too?`))
+      .child(div().text_size(11.5).text_color(t.dim).child("Only these settings are written. Each project keeps its name, folder, group, pin and every other setting."))
+      .child(h_flex().gap(8)
+        .child(this.button(t, "pp-apply-all", `Apply to ${count === 1 ? "the project" : `all ${count} projects`}`, true, () => this.save(cx, true)))
+        .child(this.button(t, "pp-apply-none", "Only the template", false, () => this.save(cx, false)))
+        .child(this.button(t, "pp-apply-back", "Keep editing", false, () => { this.applyAsk = null; cx.notify(); })));
+  }
+
   renderEdit(t, cx) {
     const d = this.draft;
     const label = (text, note) => h_flex().gap(8).items_baseline().pt(10).pb(5)
@@ -1191,6 +1222,7 @@ export default class ProjectPresets extends View {
         .children(SECTIONS.map(([id, name]) => this.button(t, `pp-sec-${id}`, name, this.section === id, () => this.showSection(id)))))
       .child(v_flex().min_h(0).h(430).overflow_y_scrollbar().pr(8).children(sections[this.section]()))
       .child(this.error ? div().pt(8).text_size(12).text_color(t.blocked).child(this.error) : div())
+      .when(Boolean(this.applyAsk), (el) => el.child(this.renderApplyAsk(t, cx)))
       .child(h_flex().pt(12).gap(8).justify_end()
         .when(this.index != null, (el) => el.child(this.button(t, "pp-del", this.confirmDelete ? "Click again to delete" : "Delete", false, () => this.remove(cx))))
         .child(div().flex_1())

@@ -56,7 +56,7 @@ Use a throwaway git repo as your test project so you don't create worktrees in r
 
 ## Screenshots
 
-To capture a view for the docs, create `~/.config/herdr-app/data/project-presets.demo` containing JSON, then reopen the picker (`herdr-app do mod.open '{"name":"project-presets"}'`) and take `herdr-app shot`. The file opens the picker already in a view: `{ "view": "list|edit|delete|name|worktrees|backup|duplicate|busy", "project": "<name>", "query": "…", "section": "project|worktree|git|startup", "text": "…", "tick": true, "confirm": true, "notes": ["…"], "detail": true, "layout": "<layout name>" }`. Delete the file afterwards. Use demo projects rather than your own, and keep private repository names out of the images.
+To capture a view for the docs, create `~/.config/herdr-app/data/project-presets.demo` containing JSON, then reopen the picker (`herdr-app do mod.open '{"name":"project-presets"}'`) and take `herdr-app shot`. The file opens the picker already in a view: `{ "view": "list|edit|delete|name|worktrees|backup|duplicate|busy", "project": "<name>", "query": "…", "section": "project|worktree|git|startup", "text": "…", "tick": true, "confirm": true, "notes": ["…"], "detail": true, "layout": "<layout name>", "ask": "<agent>" }`. Delete the file afterwards. Use demo projects rather than your own, and keep private repository names out of the images.
 
 ## Code conventions
 

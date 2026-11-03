@@ -2,7 +2,8 @@
 // already in a given view, so each screen can be captured the same way every time. Absent by default.
 //   { "view": "list|edit|delete|name|worktrees|backup|duplicate|busy", "project": "api-gateway", "query": "apgw",
 //     "focus": "agent", "text": "fix login", "tick": true, "confirm": true, "notes": ["…"],
-//     "detail": true|false (show or hide the detail card), "layout": "agent-terminal" (a layout picked for the launch) }
+//     "detail": true|false (show or hide the detail card), "layout": "agent-terminal" (a layout picked for the launch),
+//     "ask": "codex" (view edit on a saved template: sets its agent and presses Save, showing the apply-to-projects question) }
 import * as fs from "fs/promises";
 import { appHome } from "herdr";
 
