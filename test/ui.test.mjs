@@ -1518,3 +1518,59 @@ test("a load that started before a worktree change doesn't refill the cache with
   await load;
   assert.ok(!cache.has(dir) || cache.get(dir).info.worktrees === 1, "no stale answer kept as fresh");
 });
+
+test("typing a branch name asks git once typing pauses, not for every letter", async () => {
+  const dir = makeRepo({ name: "Ada" });
+  const { v, cx } = await open([proj("demo", dir, { worktree: { mode: "ask", branchTemplate: "{user}/{slug}" } })]);
+  enter(v);
+  await cx.settle();
+  cx.timers.length = 0;
+  let asked = 0;
+  const orig = v.refreshPreview.bind(v);
+  v.refreshPreview = (c) => { asked++; return orig(c); };
+  for (const s of ["f", "fi", "fix", "fix l"]) v.nameInput.set_value(s);
+  assert.equal(asked, 0, "no request per keystroke");
+  const waits = cx.timers.filter((t) => t.ms === 200);
+  assert.equal(waits.length, 4);
+  for (const t of waits) t.fn();
+  assert.equal(asked, 1, "only the last keystroke's timer asks");
+  await cx.settle();
+  assert.equal(v.preview, "ada/fix-l");
+});
+
+test("the list is not scored and sorted again for an arrow press, only when the query, projects or snapshot change", async () => {
+  const { v } = await open([proj("alpha", makeRepo()), proj("beta", makeRepo())]);
+  const a = v.rows();
+  assert.equal(v.rows(), a, "same list while nothing changed");
+  v.search.set_value("alp");
+  const b = v.rows();
+  assert.notEqual(b, a);
+  assert.equal(v.rows(), b);
+  assert.equal(b.length, 1);
+  v.search.set_value("");
+  v.projects = [...v.projects, proj("gamma", makeRepo())];
+  assert.equal(v.rows().length, 3, "a new project list is picked up");
+});
+
+test("opening a project's own checkout forgets its cached git details (setup may have changed it)", async () => {
+  const dir = makeRepo();
+  const { v, cx } = await open([proj("demo", dir, { worktree: { mode: "never" } })]);
+  await v.loadInfo(cx);
+  assert.ok(v.constructor.infoCache.has(dir));
+  enter(v);
+  await cx.settle();
+  assert.ok(!v.constructor.infoCache.has(dir));
+});
+
+test("an answer for text typed before the latest keystroke is dropped even while the debounce is waiting", async () => {
+  const dir = makeRepo({ name: "Ada" });
+  const { v, cx } = await open([proj("demo", dir, { worktree: { mode: "ask", branchTemplate: "{user}/{slug}" } })]);
+  enter(v);
+  await cx.settle();
+  const held = [];
+  v.nameInput.set_value("old");
+  v.refreshPreview({ notify() {}, spawn: (fn) => { held.push(fn); } });
+  v.nameInput.set_value("older-still-typing"); // fires change -> previewSoon, which drops the request out there
+  await held[0](cx);
+  assert.notEqual(v.preview, "ada/old", "the in-flight answer for old text is not shown");
+});

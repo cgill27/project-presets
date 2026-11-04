@@ -96,7 +96,8 @@ function hcNow(args) {
   if (cmd === "get") {
     (state.gets ??= []).push(rest[0]);
     const t = state.terminals.find((x) => x.address === rest[0]);
-    return t ? ok(JSON.stringify({ ...t, foreground: { name: state.foreground } })) : { code: 3, stdout: "", stderr: "not_found\n" };
+    return t ? ok(JSON.stringify({ ...t, status: t.status ? { app: t.agent ?? "x", state: t.status } : null, foreground: { name: state.foreground } })) // like the real hc get: status is a record here, a bare word in ls
+       : { code: 3, stdout: "", stderr: "not_found\n" };
   }
   if (cmd === "send") {
     state.sent.push({ terminal: rest[0], text: rest[1] });

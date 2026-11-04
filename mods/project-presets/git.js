@@ -60,8 +60,21 @@ export async function templateVars(project, slugText) {
 
 /** What the branch will be called, before collisions are resolved. */
 export async function previewBranch(project, slugText) {
-  return branchName(project.worktree.branchTemplate, await templateVars(project, slugText));
+  const folder = projectFolder(project);
+  // The checkout's top folder and the git user don't change while someone types a name: ask git once per folder, not per keystroke.
+  let kept = previewKept.get(folder);
+  if (!kept || Date.now() - kept.at > 30000) {
+    const { top } = await inspect(folder);
+    kept = { at: Date.now(), top, user: await gitUser(folder) };
+    if (previewKept.size >= 50) previewKept.clear(); // a few folders in practice; this only stops endless growth
+    previewKept.set(folder, kept);
+  }
+  return branchName(project.worktree.branchTemplate, {
+    user: kept.user, date: dateStamp(), slug: slug(slugText) || timeStamp(),
+    repo: basename(kept.top), project: slug(project.name), name: project.name,
+  });
 }
+const previewKept = new Map(); // folder → { at, top, user }
 
 /** git fetch, tolerating failure (offline): the local ref is used instead. */
 async function fetchRemote(folder, g, log) {
@@ -272,7 +285,8 @@ async function sendWhenReady(terminal, folder, text) {
     else if (r.code === 3) t = false;
     if (t === false || t?.state === "finished") return log("error", "prompt not sent: the terminal ended", { terminal });
     const waited = Date.now() - started;
-    const status = t?.status ?? null;
+    // `hc get` reports status as a record ({ app, state }); `hc ls` as the bare state word.
+    const status = (typeof t?.status === "object" ? t.status?.state : t?.status) ?? null;
     const fg = t?.foreground?.name ?? null;
     log("debug", "waiting to send prompt", { terminal, status, agent: t?.agent, foreground: fg, waited });
     if (status === "blocked") return log("error", "prompt not sent: the agent is waiting on you", { terminal });

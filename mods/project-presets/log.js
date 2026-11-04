@@ -12,6 +12,14 @@ let tail = null; // the last 64 KB, read from the file once and kept here
 let pending = ""; // lines logged since the last write
 let scheduled = false;
 
+/** True when the file isn't the one we last wrote: gone, emptied (`: > file`) or changed by someone else. Where fs has no
+ *  stat() only a missing file is noticed. */
+async function changed(path) {
+  if (await missing(path)) return true;
+  if (typeof fs.stat !== "function") return false;
+  try { return (await fs.stat(path)).size !== new TextEncoder().encode(tail).length; } catch { return true; }
+}
+
 /** herdr's fs has exists(); plain node's fs/promises doesn't, so fall back to access(). */
 async function missing(path) {
   try {
@@ -30,7 +38,7 @@ async function flush() {
   const path = `${dir()}/project-presets.log`;
   try {
     // The kept tail is only trusted while the file is still there: someone clearing the log starts it afresh.
-    if (tail === null || (await missing(path))) {
+    if (tail === null || (await changed(path))) {
       tail = "";
       try { tail = await fs.readFile(path, "utf8"); } catch {}
     }

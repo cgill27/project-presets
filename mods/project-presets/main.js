@@ -294,8 +294,18 @@ export default class ProjectPresets extends View {
 
   rows() {
     if (this.frame) return this.frame.rows; // while rendering, every caller gets the same list
-    const recent = this.snap.recent;
     const q = this.query();
+    // Scoring and sorting every project is the same work until the query, the projects or herdr's snapshot change, and an
+    // arrow press, a reveal and the draw after it all ask. (Projects are replaced, never edited in place: the editor works on a draft.)
+    const memo = this.rowsMemo;
+    if (memo && memo.q === q && memo.projects === this.projects && memo.template === this.virtualTemplate && memo.snapKey === this.snapKey) return memo.rows;
+    const rows = this.computeRows(q);
+    this.rowsMemo = { q, projects: this.projects, template: this.virtualTemplate, snapKey: this.snapKey, rows };
+    return rows;
+  }
+
+  computeRows(q) {
+    const recent = this.snap.recent;
     const open = new Map(); // folder → its first open space, so a row doesn't scan every space
     for (const s of this.snap.spaces) if (!open.has(s.folder)) open.set(s.folder, s);
     const rows = this.allProjects().map((p) => {
@@ -435,13 +445,21 @@ export default class ProjectPresets extends View {
     this.mode = "name";
     this.preview = "";
     this.nameInput = InputState.new({ placeholder: "branch name, e.g. fix login (empty: use the time)" });
-    this.nameInput.on("change", (_e, cx) => this.refreshPreview(cx));
+    this.nameInput.on("change", (_e, cx) => this.previewSoon(cx));
     this.nameInput.on("submit", () => this.start(p, true, this.nameInput.value()));
     this.nameInput.focus();
     this.refreshPreview(this.cx);
   }
 
+  /** A keystroke in the name box: the preview is asked for once typing pauses, not for every letter. */
+  previewSoon(cx) {
+    const token = (this.previewTimer = (this.previewTimer ?? 0) + 1);
+    this.previewSeq = (this.previewSeq ?? 0) + 1; // a request still out is for older text: its answer is dropped
+    this.cx.timer.after(200, () => { if (token === this.previewTimer && this.mode === "name") this.refreshPreview(this.cx); });
+  }
+
   refreshPreview(cx) {
+    this.previewTimer = (this.previewTimer ?? 0) + 1; // a pending keystroke timer is now moot
     const p = this.target;
     const text = this.nameInput.value();
     // Answers can come back out of order: only the latest request may set the preview.
@@ -487,8 +505,10 @@ export default class ProjectPresets extends View {
           this.dismiss();
           return run("space.select", { id: existing.id });
         } else {
+          invalidate(folder); // setup may change the checkout the cached details describe
           await prepareMain(p, log);
           await runSetup(p, folder, log);
+          invalidate(folder);
         }
         setShared(RECENT, { ...(shared(RECENT) ?? {}), [p.path]: Date.now() });
         if (p.startup.agent.trim() && p.startup.prompt && p.startup.promptMode === "send") log("Waiting for the agent to be ready for its prompt…");

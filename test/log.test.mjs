@@ -66,3 +66,13 @@ test("clearing the log file starts it afresh instead of bringing the old lines b
   await settle(() => text().includes("after clear"));
   assert.ok(!text().includes("before clear"));
 });
+
+test("emptying the log file in place starts it afresh instead of bringing the old lines back", async () => {
+  const { writeFileSync } = await import("node:fs");
+  log("error", "old line");
+  await settle(() => text().includes("old line"));
+  writeFileSync(file, ""); // like `: > project-presets.log`
+  log("error", "new line");
+  await settle(() => text().includes("new line"));
+  assert.ok(!text().includes("old line"));
+});
