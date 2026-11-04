@@ -296,11 +296,12 @@ export default class ProjectPresets extends View {
     if (this.frame) return this.frame.rows; // while rendering, every caller gets the same list
     const recent = this.snap.recent;
     const q = this.query();
-    const open = this.snap.spaces;
+    const open = new Map(); // folder → its first open space, so a row doesn't scan every space
+    for (const s of this.snap.spaces) if (!open.has(s.folder)) open.set(s.folder, s);
     const rows = this.allProjects().map((p) => {
       const score = Math.max(fuzzy(q, p.name), fuzzy(q, p.group), fuzzy(q, basename(p.path)) - 1);
       const folder = projectFolder(p);
-      return { p, score, space: p.template ? undefined : open.find((s) => s.folder === folder), used: recent[p.path] ?? 0 };
+      return { p, score, space: p.template ? undefined : open.get(folder), used: recent[p.path] ?? 0 };
     }).filter((r) => r.score >= 0);
     rows.sort((a, b) => q
       ? b.score - a.score

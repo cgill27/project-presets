@@ -244,12 +244,14 @@ async function liveTerminals() {
   return (JSON.parse(r.stdout).terminals ?? []).filter((t) => t.state === "live");
 }
 
-/** The terminal space.new just made: new since `known`, starting in `folder`. */
+/** The terminal space.new just made: new since `known`, starting in `folder`. The address isn't known yet, so this has to list
+ *  every terminal; it asks quickly at first (the terminal usually shows up at once) and backs off, for about 10 s in all. */
 async function findNewTerminal(known, folder) {
-  for (let i = 0; i < 20; i++) {
+  const until = Date.now() + 10000;
+  for (let wait = 0.2; Date.now() < until; wait = Math.min(wait * 1.5, 1)) {
     const t = (await liveTerminals()).find((x) => !known.has(x.address) && x.cwd === folder);
     if (t) return t.address;
-    await sleep(0.5);
+    await sleep(wait);
   }
   return null;
 }
@@ -263,19 +265,21 @@ async function sendWhenReady(terminal, folder, text) {
   if (!terminal) return log("error", "prompt not sent: couldn't find the new terminal", { folder });
   const started = Date.now();
   for (;;) {
-    const t = (await liveTerminals()).find((x) => x.address === terminal);
-    if (!t) return log("error", "prompt not sent: the terminal ended", { terminal });
+    // One call about this terminal alone (status and foreground program together), not a list of every terminal.
+    const r = await hc(["get", terminal, "--json"]);
+    let t = null;
+    if (r.code === 0) { try { t = JSON.parse(r.stdout); } catch {} }
+    else if (r.code === 3) t = false;
+    if (t === false || t?.state === "finished") return log("error", "prompt not sent: the terminal ended", { terminal });
     const waited = Date.now() - started;
-    let fg = null;
-    if (!t.status) {
-      try { fg = JSON.parse((await hc(["get", terminal, "--json"])).stdout).foreground?.name ?? null; } catch {}
-    }
-    log("debug", "waiting to send prompt", { terminal, status: t.status ?? null, agent: t.agent, foreground: fg, waited });
-    if (t.status === "blocked") return log("error", "prompt not sent: the agent is waiting on you", { terminal });
-    if (t.status === "idle" || t.status === "done") break;
-    if (!t.status && fg && !SHELLS.has(fg) && waited > 6000) break;
+    const status = t?.status ?? null;
+    const fg = t?.foreground?.name ?? null;
+    log("debug", "waiting to send prompt", { terminal, status, agent: t?.agent, foreground: fg, waited });
+    if (status === "blocked") return log("error", "prompt not sent: the agent is waiting on you", { terminal });
+    if (status === "idle" || status === "done") break;
+    if (t && !status && fg && !SHELLS.has(fg) && waited > 6000) break;
     if (waited > 30000) return log("error", "prompt not sent: the agent never became ready", { terminal, foreground: fg });
-    await sleep(0.5);
+    await sleep(waited > 8000 ? 1 : 0.5);
   }
   const r = await hc(["send", terminal, text]);
   log("debug", "sent prompt", { terminal, code: r.code });

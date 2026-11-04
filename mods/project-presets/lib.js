@@ -2,9 +2,9 @@
 
 /** Subsequence match: -1 for no match, else a score (higher is better). */
 export function fuzzy(query, text) {
+  if (!query) return 0; // no search: every row matches, and nothing needs lowercasing
   const q = query.toLowerCase();
   const s = text.toLowerCase();
-  if (!q) return 0;
   let score = 0;
   let i = 0;
   let prev = -2;
@@ -224,14 +224,18 @@ export function ago(ts, now = Date.now()) {
  *  keeping its index into `rows`. No headers while searching (the order is then by match) or when only one
  *  section has anything in it. */
 export function listItems(rows, searching) {
-  const parts = [
-    ["Open now", (r) => r.space && !r.p.template],
-    ["Pinned", (r) => !r.space && r.p.pinned && !r.p.template],
-    ["Everything else", (r) => !r.space && !r.p.pinned && !r.p.template],
-    ["Template", (r) => r.p.template],
-  ].map(([title, test]) => ({ title, rows: rows.map((r, index) => ({ r, index })).filter((x) => test(x.r)) })).filter((x) => x.rows.length);
-  if (searching || parts.length < 2) return rows.map((r, index) => ({ row: r, index }));
-  return parts.flatMap((x) => [{ header: x.title }, ...x.rows.map(({ r, index }) => ({ row: r, index }))]);
+  if (searching) return rows.map((r, index) => ({ row: r, index }));
+  const buckets = { open: [], pinned: [], other: [], template: [] };
+  rows.forEach((r, index) => {
+    const item = { row: r, index };
+    if (r.p.template) buckets.template.push(item);
+    else if (r.space) buckets.open.push(item);
+    else if (r.p.pinned) buckets.pinned.push(item);
+    else buckets.other.push(item);
+  });
+  const parts = [["Open now", buckets.open], ["Pinned", buckets.pinned], ["Everything else", buckets.other], ["Template", buckets.template]].filter(([, items]) => items.length);
+  if (parts.length < 2) return rows.map((r, index) => ({ row: r, index }));
+  return parts.flatMap(([title, items]) => [{ header: title }, ...items]);
 }
 
 /** Where a layout's panes sit, as fractions of its box: [{ name, x, y, w, h }]. Each split halves the pane it

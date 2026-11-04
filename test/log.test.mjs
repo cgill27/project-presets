@@ -1,7 +1,7 @@
 import "./helpers/setup.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 
 const { state } = await import("./helpers/herdr-stub.mjs");
 const { log, logError, initLog } = await import("../mods/project-presets/log.js");
@@ -39,4 +39,30 @@ test("only the last 64 KB are kept", async () => {
   await settle(() => text().includes("line 699"));
   assert.ok(text().length <= 64 * 1024);
   assert.ok(!text().includes("line 0 "));
+});
+
+test("a burst of lines is written in order, once the file has all of them", async () => {
+  for (let i = 0; i < 20; i++) log("error", `burst ${i}`);
+  await settle(() => text().includes("burst 19"));
+  const seen = [...text().matchAll(/burst (\d+)/g)].map((m) => Number(m[1]));
+  assert.deepEqual(seen, Array.from({ length: 20 }, (_, i) => i));
+});
+
+test("a burst is written in a few writes, not one per line", async () => {
+  // Count the distinct states the file goes through: a write per line would show about 200 of them.
+  const sizes = new Set();
+  const watch = setInterval(() => { if (existsSync(file)) sizes.add(readFileSync(file, "utf8").length); }, 0);
+  for (let i = 0; i < 200; i++) log("error", `many ${i}`);
+  await settle(() => text().includes("many 199"));
+  clearInterval(watch);
+  assert.ok(sizes.size <= 10, `${sizes.size} different file states seen for 200 lines`);
+});
+
+test("clearing the log file starts it afresh instead of bringing the old lines back", async () => {
+  log("error", "before clear");
+  await settle(() => text().includes("before clear"));
+  rmSync(file);
+  log("error", "after clear");
+  await settle(() => text().includes("after clear"));
+  assert.ok(!text().includes("before clear"));
 });

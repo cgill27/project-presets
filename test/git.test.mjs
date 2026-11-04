@@ -525,3 +525,29 @@ test("mapLimit stops taking items once one fails", async () => {
   }), /boom/);
   assert.ok(started < 8, `started ${started}`);
 });
+
+test("send mode lists the terminals only to find the new one, then asks about that terminal alone", async () => {
+  state.agentStatus = null;
+  state.foreground = "hermes";
+  state.lsCalls = 0;
+  state.gets = [];
+  const p = project("/r/api", { startup: { agent: "hermes", prompt: "hi", promptMode: "send" } });
+  await G.launch(p, "/r/api", "Demo");
+  assert.equal(state.sent.length, 1);
+  assert.ok(state.lsCalls <= 3, `listed ${state.lsCalls} times`);
+  assert.ok(state.gets.length >= 10, "polled with hc get while waiting for the 6 s rule");
+  assert.ok(state.gets.every((a) => a === state.sent[0].terminal), "only ever asked about the new terminal");
+});
+
+test("send mode gives up quietly when the terminal is gone", async () => {
+  state.agentStatus = null;
+  state.foreground = "hermes";
+  const p = project("/r/api", { startup: { agent: "hermes", prompt: "hi", promptMode: "send" } });
+  const orig = state.terminals;
+  const launching = G.launch(p, "/r/api", "Demo");
+  await new Promise((r) => setTimeout(r, 300));
+  state.terminals = [];
+  await launching;
+  assert.deepEqual(state.sent, []);
+  state.terminals = orig;
+});

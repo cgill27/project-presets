@@ -91,8 +91,10 @@ export async function hc(args) {
 function hcNow(args) {
   const [cmd, ...rest] = args;
   const ok = (stdout = "") => ({ code: 0, stdout, stderr: "" });
+  if (cmd === "ls") state.lsCalls = (state.lsCalls ?? 0) + 1;
   if (cmd === "ls") return ok(JSON.stringify({ terminals: [...state.terminals].reverse() })); // newest first: the worst case for picking "the new one"
   if (cmd === "get") {
+    (state.gets ??= []).push(rest[0]);
     const t = state.terminals.find((x) => x.address === rest[0]);
     return t ? ok(JSON.stringify({ ...t, foreground: { name: state.foreground } })) : { code: 3, stdout: "", stderr: "not_found\n" };
   }
