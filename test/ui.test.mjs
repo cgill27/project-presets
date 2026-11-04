@@ -585,6 +585,8 @@ test("rows show the branch, changed files and worktree count once the git detail
   writeFileSync(join(dir, "a.txt"), "changed\n");
   sh(dir, "worktree", "add", "-q", "-b", "side", join(scratch("pp-ui-wt"), "side"));
   const { v, cx } = await open([proj("demo", dir)]);
+  v.infoToken++; // drop the load the picker started on opening, then look at a picker with no answers yet
+  v.info = {};
   assert.ok(!texts(v).includes("1 changed"), "nothing yet while loading");
   await v.loadInfo(cx);
   const t = texts(v);
@@ -1473,4 +1475,46 @@ test("saving a template asks nothing when it did not change or when there are no
   await alone.v.save(alone.cx);
   assert.equal(alone.v.applyAsk, null, "no other project to apply it to");
   assert.equal(alone.v.mode, "list");
+});
+
+test("a second picker shows the earlier git details at once and doesn't ask git again while they are fresh", async () => {
+  const dir = makeRepo({ name: "Ada" });
+  const a = await open([proj("again", dir)]);
+  await a.v.loadInfo(a.cx);
+  const first = a.v.info[dir];
+  assert.ok(first && first.branch === "main");
+  const b = await open([proj("again", dir)]);
+  b.v.info = {};
+  b.v.infoToken++;
+  await b.v.loadInfo(b.cx);
+  assert.deepEqual(b.v.info[dir], first, "seeded from the cache");
+});
+
+test("a worktree made from the picker is not hidden by cached git details on the next open", async () => {
+  const dir = makeRepo({ name: "Ada" });
+  const a = await open([proj("stale", dir)]);
+  await a.v.loadInfo(a.cx);
+  assert.equal(a.v.info[dir].worktrees, 0);
+  sh(dir, "worktree", "add", "-q", "-b", "side2", join(scratch("pp-ui-wt2"), "side2"));
+  a.v.constructor.infoCache.delete(dir); // what creating or removing a worktree through the picker does
+  const b = await open([proj("stale", dir)]);
+  b.v.infoToken++;
+  b.v.info = {};
+  await b.v.loadInfo(b.cx);
+  assert.equal(b.v.info[dir].worktrees, 1);
+});
+
+test("a load that started before a worktree change doesn't refill the cache with its old answer", async () => {
+  const dir = makeRepo({ name: "Ada" });
+  const { v, cx } = await open([proj("race", dir)]);
+  await v.loadInfo(cx);
+  const cache = v.constructor.infoCache;
+  cache.delete(dir);
+  v.infoToken++;
+  v.info = {};
+  const load = v.loadInfo(cx); // reads git now...
+  sh(dir, "worktree", "add", "-q", "-b", "race2", join(scratch("pp-ui-race"), "race2"));
+  v.constructor.invalidate(dir); // ...while the picker changes the worktrees
+  await load;
+  assert.ok(!cache.has(dir) || cache.get(dir).info.worktrees === 1, "no stale answer kept as fresh");
 });

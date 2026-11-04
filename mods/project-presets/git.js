@@ -282,17 +282,39 @@ async function sendWhenReady(terminal, folder, text) {
   if (r.code !== 0) log("error", `hc send failed: ${r.stderr.split("\n")[0]}`, { terminal });
 }
 
+/** `git worktree list`; -z (git 2.36+) keeps odd folder names intact, older gits fall back to plain porcelain. */
+async function worktreeList(folder) {
+  const r = await git(folder, ["worktree", "list", "--porcelain", "-z"]);
+  return r.code === 0 ? r : git(folder, ["worktree", "list", "--porcelain"]);
+}
+
+/** Maps `items` through async `fn`, at most `limit` at a time; results keep the order of `items`. */
+export async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0, failed = false;
+  // After one failure the others take no more items.
+  const worker = async () => {
+    for (let i = next++; i < items.length && !failed; i = next++) {
+      try { results[i] = await fn(items[i], i); } catch (e) { failed = true; throw e; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 /** A project's branch, number of changed files and number of linked worktrees, for the picker; null when the folder
  *  isn't a readable checkout. Three quick git calls. */
 export async function gitSummary(folder) {
   try {
+    // The two calls don't depend on each other, so they run side by side.
+    const listing = worktreeList(folder);
+    listing.catch(() => {}); // if status fails first, nobody awaits this one
     const st = await git(folder, ["status", "--porcelain", "-b"]);
-    if (st.code !== 0) return null;
+    if (st.code !== 0) return null; // not a checkout: don't wait for the other call
+    const list = await listing;
     const [head, ...changed] = st.stdout.split("\n").filter(Boolean);
     // "## main...origin/main [ahead 1]", "## HEAD (no branch)", "## No commits yet on main"
     const branch = (head ?? "").replace(/^## (No commits yet on |Initial commit on )?/, "").split("...")[0].replace(/ \[.*\]$/, "");
-    let list = await git(folder, ["worktree", "list", "--porcelain", "-z"]);
-    if (list.code !== 0) list = await git(folder, ["worktree", "list", "--porcelain"]);
     return { branch, dirty: changed.length, worktrees: list.code === 0 ? Math.max(0, parseWorktrees(list.stdout).length - 1) : 0 };
   } catch { return null; }
 }
@@ -301,31 +323,29 @@ export async function gitSummary(folder) {
  *  merged: the branch is already in <remote>/<base>, so removing it loses nothing. */
 export async function listWorktrees(project) {
   const folder = projectFolder(project);
-  // -z (git 2.36+) keeps odd folder names intact; older gits fall back to plain porcelain.
-  let r = await git(folder, ["worktree", "list", "--porcelain", "-z"]);
-  if (r.code !== 0) r = await git(folder, ["worktree", "list", "--porcelain"]);
+  const r = await worktreeList(folder);
   if (r.code !== 0) throw new Error(out({ stdout: r.stderr }) || "git worktree list failed");
-  const found = parseWorktrees(r.stdout).slice(1);
+  const found = parseWorktrees(r.stdout).slice(1).filter((w) => w.path && !w.prunable);
   let base = null;
   try { base = await baseRef(folder, project.git); } catch {}
   const open = spaces().filter((s) => !s.machine);
   // git reports real paths; a space opened through a symlink (macOS /var, a linked home) has the other spelling.
-  const real = new Map();
-  const realOf = async (p) => real.get(p) ?? real.set(p, await realPath(p)).get(p);
+  // Each open space's real path is resolved once, and only if some worktree has no exact match.
+  let bySpelling = null; // real path → space, built once and only if some worktree has no exact match
   const spaceAt = async (path) => {
     const exact = open.find((s) => s.folder === path);
     if (exact) return exact;
-    for (const s of open) if ((await realOf(s.folder)) === path) return s;
-    return null;
+    bySpelling ??= mapLimit(open, 4, async (s) => [await realPath(s.folder), s]).then((all) => new Map(all.reverse()));
+    return (await bySpelling).get(path) ?? null;
   };
-  const list = [];
-  for (const { path, branch, locked, prunable } of found) {
-    if (!path || prunable) continue;
-    const dirty = out(await git(path, ["status", "--porcelain"])) !== "";
-    const merged = Boolean(base && branch && (await git(folder, ["merge-base", "--is-ancestor", branch, base])).code === 0);
-    list.push({ path, branch, dirty, merged, locked, space: await spaceAt(path) });
-  }
-  return list;
+  // Each worktree's checks are independent, so a few run at once.
+  return mapLimit(found, 4, async ({ path, branch, locked }) => {
+    const [dirty, merged] = await Promise.all([
+      git(path, ["status", "--porcelain"]).then((s) => out(s) !== ""),
+      base && branch ? git(folder, ["merge-base", "--is-ancestor", branch, base]).then((m) => m.code === 0) : false,
+    ]);
+    return { path, branch, dirty, merged, locked, space: await spaceAt(path) };
+  });
 }
 
 /** Removes one worktree (git refuses when it has uncommitted changes), its branch when merged,

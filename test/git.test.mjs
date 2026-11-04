@@ -501,3 +501,27 @@ test("removeWorktree refuses a worktree with uncommitted changes", async () => {
   assert.ok(existsSync(wt.folder));
   assert.deepEqual(state.runs.filter((r) => r.command === "space.close"), []);
 });
+
+test("mapLimit keeps order and never runs more than the limit at once", async () => {
+  let running = 0, peak = 0;
+  const r = await G.mapLimit([5, 1, 4, 2, 3, 0], 2, async (n) => {
+    peak = Math.max(peak, ++running);
+    await new Promise((res) => setTimeout(res, n));
+    running--;
+    return n * 2;
+  });
+  assert.deepEqual(r, [10, 2, 8, 4, 6, 0]);
+  assert.equal(peak, 2);
+  assert.deepEqual(await G.mapLimit([], 3, async (x) => x), []);
+});
+
+test("mapLimit stops taking items once one fails", async () => {
+  let started = 0;
+  await assert.rejects(G.mapLimit([1, 2, 3, 4, 5, 6, 7, 8], 2, async (n) => {
+    started++;
+    await new Promise((res) => setTimeout(res, 2));
+    if (n === 1) throw new Error("boom");
+    return n;
+  }), /boom/);
+  assert.ok(started < 8, `started ${started}`);
+});

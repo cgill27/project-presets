@@ -70,7 +70,16 @@ const TEXT = [
   ["tabs", "Extra tabs", (p) => joinList(p.startup.tabs), (p, v) => (p.startup.tabs = splitList(v)), "commands, separate with ;;"],
 ];
 
+/** folder → { info, at }: git answers kept between openings of the picker, so rows show their details at once. */
+const infoCache = new Map();
+const INFO_FRESH_MS = 15000; // a younger answer isn't asked for again
+const infoGen = new Map(); // folder → how many times its git state was changed through the picker
+/** The picker changed this folder's worktrees: forget its answer, and let any read already under way know its answer is old. */
+const invalidate = (folder) => { infoCache.delete(folder); infoGen.set(folder, (infoGen.get(folder) ?? 0) + 1); };
+
 export default class ProjectPresets extends View {
+  static infoCache = infoCache; // the tests reach in to forget an answer
+  static invalidate = invalidate;
   init(_props, cx) {
     this.cx = cx;
     this.scroll = VirtualListScrollHandle.new();
@@ -172,19 +181,36 @@ export default class ProjectPresets extends View {
     return template ? startFromTemplate(template) : blankProject();
   }
 
-  /** Branch, changed files and worktree count for each project, three at a time so the list stays quick. */
+  /** Branch, changed files and worktree count for each project, four at a time so the list stays quick. Answers from an
+   *  earlier open show at once and are refreshed behind them unless they are recent; the selected project goes first,
+   *  then the ones never read, then the oldest. Each answer schedules a (batched) redraw so rows fill in as they arrive. */
   async loadInfo(cx) {
     const token = (this.infoToken = (this.infoToken ?? 0) + 1);
+    const now = Date.now();
     const queue = this.projects.filter((p) => !p.template && p.path);
+    for (const p of queue) {
+      const hit = infoCache.get(projectFolder(p));
+      if (hit && !(projectFolder(p) in this.info)) this.info[projectFolder(p)] = hit.info;
+    }
+    const age = (p) => now - (infoCache.get(projectFolder(p))?.at ?? 0);
+    let first = null;
+    try { first = this.selected()?.p; } catch {}
+    const todo = queue.filter((p) => age(p) > INFO_FRESH_MS).sort((x, y) => (y === first) - (x === first) || age(y) - age(x));
+    if (queue.length !== todo.length) this.bump(cx);
     const worker = async () => {
-      for (let p = queue.shift(); p; p = queue.shift()) {
+      for (let p = todo.shift(); p; p = todo.shift()) {
         if (this.infoToken !== token || this.closing) return;
         const folder = projectFolder(p);
-        this.info[folder] = await gitSummary(folder);
+        const gen = infoGen.get(folder) ?? 0;
+        const info = await gitSummary(folder);
+        if (this.infoToken !== token || this.closing) return; // an older load must not stamp the shared cache as fresh
+        if ((infoGen.get(folder) ?? 0) !== gen) continue; // worktrees changed while git was answering: that answer may be old
+        infoCache.set(folder, { info, at: Date.now() });
+        this.info[folder] = info;
+        this.bump(cx);
       }
     };
-    await Promise.all([worker(), worker(), worker()]);
-    this.bump(cx);
+    await Promise.all([worker(), worker(), worker(), worker()]);
   }
 
   /** Puts the picker in the view a demo file names (see demo.js). */
@@ -449,7 +475,9 @@ export default class ProjectPresets extends View {
         let name = p.name;
         const existing = findSpace(p);
         if (worktree) {
+          invalidate(projectFolder(p)); // the worktree count changes
           const wt = await createWorktree(p, slugText, log);
+          invalidate(projectFolder(p));
           folder = wt.folder;
           name = worktreeSpaceName(p, wt);
           await runSetup(p, folder, log);
@@ -666,8 +694,12 @@ export default class ProjectPresets extends View {
     this.cx.spawn(async (cx) => {
       const failed = [];
       for (const w of chosen) {
+        invalidate(projectFolder(this.target)); // the worktree count and branches change
         try { await removeWorktree(this.target, w); log("debug", "removed worktree", { path: w.path }); } catch (e) { logError("remove worktree", e); failed.push(e.message); }
       }
+      invalidate(projectFolder(this.target));
+      delete this.info[projectFolder(this.target)];
+      if (this.gitInfo) this.loadInfo(cx);
       this.wtSel = new Set();
       this.error = failed.length ? failed.join("\n") : null;
       try { this.wts = await listWorktrees(this.target); } catch {}
