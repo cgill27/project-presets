@@ -1,8 +1,8 @@
-# Project presets
+# Project Presets
 
-A project picker for the Herdr app. You keep a list of local git checkouts, each with its own settings: whether selecting it opens the checkout or a fresh worktree, how the branch is named, what git does first, and what starts in the new space. `ctrl-alt-p` (`cmd-alt-p` on macOS) opens a fuzzy-searchable list; Enter does what that project is set up to do.
+A project picker for the Herdr app. You keep a list of local git checkouts, each with its own settings: whether selecting it opens the checkout or a fresh worktree, how the branch is named, what git does first, and what starts in the new space. `ctrl-alt-p` (`cmd-alt-p` on macOS) opens a fuzzy-searchable list; Enter does what that project is set up to do. You don't have to enter the list by hand: point it at the folder you keep your repositories in and every git checkout under it is listed, and a repository can carry its own settings in `.herdr/project-presets.json` for everyone who clones it.
 
-![Project presets](preview.png)
+![Project Presets](preview.png)
 
 ## What you see
 

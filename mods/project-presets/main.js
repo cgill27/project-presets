@@ -1,4 +1,4 @@
-// Project presets: a picker of configured git checkouts, each with its own worktree and startup
+// Project Presets: a picker of configured git checkouts, each with its own worktree and startup
 // settings. Type to filter, ↑/↓ and Enter to open, Shift+Enter for the main checkout, Add project / Edit / Worktrees / Delete
 // buttons (or alt/ctrl/cmd + n, e, w, d), alt+b (cmd+alt+B on a Mac) to go back a screen. Herdr itself closes a popup on Esc and
 // never passes that key to the mod, so Esc can only close the picker.

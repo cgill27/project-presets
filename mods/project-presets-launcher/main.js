@@ -1,4 +1,4 @@
-// The clickable "Projects" button that opens the Project presets picker (the key combo keeps working).
+// The clickable "Projects" button that opens the Project Presets picker (the key combo keeps working).
 // It sits in one of three layout blocks (sidebar footer, status bar, tab bar); props().slot says which.
 // Only the slot chosen in the picker ("Launcher: …", saved in shared("project-presets.launcher")) shows;
 // the others hide their own block, so no empty space is left behind.
