@@ -9,7 +9,7 @@ const file = `${state.appHome}/data/project-presets.json`;
 
 test("a missing file is an empty list", async () => {
   reset();
-  assert.deepEqual(await loadConfig(), { projects: [], layouts: [], gitInfo: true, hideTemplate: false, raw: null });
+  assert.deepEqual(await loadConfig(), { projects: [], layouts: [], gitInfo: true, hideTemplate: false, scan: { folders: [], depth: 3, hidden: [] }, raw: null });
 });
 
 test("save then load round-trips and fills defaults", async () => {

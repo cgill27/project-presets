@@ -3,7 +3,8 @@
 //   { "view": "list|edit|delete|name|worktrees|backup|duplicate|busy", "project": "api-gateway", "query": "apgw",
 //     "focus": "agent", "text": "fix login", "tick": true, "confirm": true, "notes": ["…"],
 //     "detail": true|false (show or hide the detail card), "layout": "agent-terminal" (a layout picked for the launch),
-//     "ask": "codex" (view edit on a saved template: sets its agent and presses Save, showing the apply-to-projects question) }
+//     "ask": "codex" (view edit on a saved template: sets its agent and presses Save, showing the apply-to-projects question),
+//     "steps": [["select", "docs"], ["activate", false], ["wait", 1]] (actions run in order after the view is set: see runDemoSteps) }
 import * as fs from "fs/promises";
 import { appHome } from "herdr";
 

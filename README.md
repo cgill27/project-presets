@@ -2,7 +2,22 @@
 
 A [Herdr](https://herdr.dev) app mod: a project picker where each project is a local git checkout with its own settings. Press `ctrl-alt-p` (`cmd-alt-p`, ⌘⌥P, on macOS; `cmd-p` is already herdr's own space picker there), fuzzy-search, Enter. Per project you choose whether to open the checkout or a fresh worktree (always, ask for a branch name, or never), the branch-name template, whether to fetch first, which agent to start with which arguments and first prompt, setup commands and extra tabs.
 
-![A tour of project-presets: pick a project, name the branch, and get a new worktree with the agent running](docs/tour.gif)
+You don't have to enter your projects by hand: point the picker at the folder you keep your repositories in and every git checkout under it is listed, ready to open. A repository can also carry its own settings in `.herdr/project-presets.json`, so everyone who clones it opens it the same way.
+
+![A tour of project-presets: pick a project, name the branch, and get a new worktree with the agent running; then scan a folder so every checkout is listed, and review a repo's own preset file before using it](docs/tour.gif)
+
+## Getting your projects in
+
+There are four ways, and they mix freely. Each is described in full under [Screens](#screens).
+
+| You want | Do this |
+|---|---|
+| Every repository you have, at once | Press **alt+f** (**⌘F**), or click **Scan…**, and add the folder that holds them, such as `~/code`. Every git checkout under it (up to 3 folders down) appears under **Found in your folders** and opens with your Template's settings. Nothing is written until you save one. See [Scanning a folder for projects](#scanning-a-folder-for-projects). |
+| A repository that sets itself up | Commit a `.herdr/project-presets.json` to it: agent, first prompt, setup commands, extra tabs, layout, worktree and git settings. **Write repo preset** in the editor makes the file from a project you already have. Anyone who scans or adds that repo is shown what the file sets and can use it. See [A preset file in the repository](#a-preset-file-in-the-repository). |
+| One project with its own settings | **Add project** (**alt+n**), **Browse…** to the folder, save. If the folder has a preset file, the editor starts filled in from it. Set the **Template** first and every new project starts from it. See [Adding and editing a project](#adding-and-editing-a-project). |
+| The list you had on another machine | **Import / export…** (**alt+x**): export there, import here. See [Importing and exporting your config](#importing-and-exporting-your-config). |
+
+The quickest start on a new machine: open the picker, edit the **Template** once (your agent, layout and worktree mode), then scan your code folder. Every project you have is now one Enter away.
 
 ## Screens
 
@@ -40,7 +55,7 @@ When it finishes you land in a new space on the new worktree, with the agent alr
 
 The list is split into **Open now**, **Pinned** and **Everything else** (no headers while you search, or when only one group has projects). Each row starts with an avatar drawn like herdr's sidebar draws a space: a tile in the space's own color with the project's initial (an outline for a project with no open space). Then come the agent icon and, when git details are on, its branch, a `N changed` chip when files are modified, and `N wt` for linked worktrees. The git details run git in every project each time the picker opens; turn them off with `"gitInfo": false` next to `projects` in `~/.config/herdr-app/data/project-presets.json` (the card then also drops its Branch, Changes and Worktrees rows). An open space gets a status stripe on the left edge, and the marker pulses while its agent is working. Typing highlights the letters that matched, and the search box counts matches (`3 of 12`).
 
-**The toolbar** under the search box holds the buttons: Add project, then Duplicate, Worktrees, Edit and Delete for the highlighted project (it says "acts on <name>"), and at the right Import / export… and Show/Hide details. Each has a key, listed in the line at the bottom.
+**The toolbar** under the search box holds the buttons: Add project, then Duplicate, Worktrees, Edit and Delete for the highlighted project (it says "acts on <name>"), and at the right Scan…, Import / export…, the Launcher button and Show/Hide details. Each has a key, listed in the line at the bottom. **Settings** and a **×** that closes the picker sit in the heading, beside Esc; every other screen has the × too.
 
 **The detail card** sits beside the list: agent, branch, changes, worktrees, when you last opened the project, and the layout choices as small pictures of their panes (click one, or press **ctrl+alt+L**). It says what Enter will do ("Enter asks for a branch name and opens agent + terminal below") and holds the Open, Checkout, Worktrees, Edit and Delete buttons. Hide it with **ctrl+alt+I** (**⌘⌥I** on macOS) or the Hide details button, if it is too large or not wanted; the choice is remembered. Without it the layout choice sits under the list as text chips and the buttons sit under the list. The popup is 1060 px wide; narrow `overlay.width` in `mod.json` if you never use the card.
 
@@ -111,6 +126,63 @@ The last row of the list is a **Template**: a project with no folder and some st
 ![Duplicating a project: the editor opens on a copy](docs/screenshots/20-duplicate.png)
 
 - **Remove the template** with Delete if you don't want the row; it stays gone. To bring it back, delete `"hideTemplate"` from `~/.config/herdr-app/data/project-presets.json`.
+
+### Settings: text size
+
+**Settings** (**alt+s**, **⌘S**; the button is in the heading of the project list) holds what you would otherwise set by hand:
+
+- **Text size**, from 80% to 150% in steps of 10 (**A−**, **A+**, **Reset**; or hold alt, ⌘ on a Mac, and press `-`, `=` or `0`). Text, rows, buttons, boxes, icons and the detail card's width all follow, so the picker can be made compact on a small laptop screen or larger on a big one. It is kept for next time, on this machine. Herdr's own zoom scales the whole app, the picker included; this changes only the picker.
+- **Detail card** shown or hidden (the same as ctrl+alt+I).
+- **Git details** on or off (the same as `"gitInfo"` in `project-presets.json`).
+
+![Settings: text size, detail card and git details](docs/screenshots/26-settings.png)
+
+The popup's own width is decided by herdr when it opens, so it is not in Settings: it is `overlay.width` in the mod's `mod.json` (1060 px). A value up to 1 is a share of the window, so `0.9` follows any screen.
+
+### Scanning a folder for projects
+
+You don't have to add projects one by one. **Scan…** (**alt+f**, **⌘F**) opens the Scan folders screen, which takes the folder you keep your repositories in, such as `~/code`, and from then on every git checkout under it (up to 3 folders down) is in the picker under **Found in your folders**.
+
+- **A found project opens straight away** with your Template's settings: Enter, and you get the worktree, the agent and the layout the Template says. The base branch is asked of git (the remote's default branch), so a repo on `master` works without setting anything.
+- **Nothing is written for it.** Found projects are not in your data file. **Save as project…** (**alt+e**) opens the editor on one so you can give it settings of its own; saved, it moves up to your own projects.
+- **Hide** (**alt+d**, twice) drops one from the list without touching the folder. "Show N hidden again" on the Scan folders screen brings them back.
+- Hidden folders, `node_modules`, linked worktrees and submodules are skipped, and a checkout inside another checkout is not listed. The scan is kept for 30 seconds between openings; **Scan again** asks at once. Set `"depth"` (1 to 6) in `"scan"` in `project-presets.json` to look deeper or shallower. Scan folders are not part of an export.
+
+| Scan folders | Found projects in the list |
+|---|---|
+| ![Scan folders: one folder added, twelve checkouts found](docs/screenshots/23-scan-folders.png) | ![The list with a Found in your folders section; one row has a repo preset to review](docs/screenshots/24-found-projects.png) |
+
+### A preset file in the repository
+
+A repository can carry its own settings in **`.herdr/project-presets.json`**, so everyone who clones it opens it the same way without filling in the editor:
+
+```json
+{
+  "name": "Docs Site",
+  "worktree": { "mode": "ask", "branchTemplate": "{user}/{date}-{slug}" },
+  "git": { "base": "develop" },
+  "startup": {
+    "agent": "claude",
+    "setup": ["npm ci"],
+    "tabs": ["npm run dev"],
+    "layout": "coding"
+  },
+  "layouts": [
+    { "name": "coding", "label": "Agent and a terminal", "panes": [{ "type": "agent" }, { "type": "shell", "direction": "down" }] }
+  ]
+}
+```
+
+Every key is optional and means what it does in a project: `name`, `group`, `worktree` (`mode`, `branchTemplate`, `root`, `spaceName`, `repoSpace`), `git` (`fetch`, `remote`, `base`, `fastForward`), `startup` (`agent`, `args`, `prompt`, `promptMode`, `setup`, `tabs`, `layout`) and `layouts`. What the file leaves out comes from your Template.
+
+- **Making one:** open a project in the editor and click **Write repo preset**. It writes that project's shared settings (and the layout it names, if it is one of yours) to the repo; commit the file. Your folder, pin, worktree folder and space name are left out.
+- **Using one, in a found project:** the row says `repo preset: review`. Enter shows everything the file sets, with the commands that would run on your machine highlighted, and three buttons: **Use these settings** (**alt+t**), **Ignore the file**, **Back**. Nothing runs before you answer, and Enter alone never answers. Your answer is remembered for that exact file; if the file changes you are asked again.
+- **Using one, when adding a project:** **Browse…** to a folder that has the file fills the editor from it. Read the Startup section, change what you like, and save. A saved project keeps its own settings from then on and does not follow later changes to the file.
+- A file that isn't valid is reported on the row and the card, and the project opens with your Template's settings.
+
+| Reviewing a repo's preset file | Writing one from a project |
+|---|---|
+| ![The review screen: every setting the file makes, with the commands that would run highlighted](docs/screenshots/25-repo-preset-review.png) | ![The editor after Write repo preset: the file was written to the repo](docs/screenshots/27-write-repo-preset.png) |
 
 ### Importing and exporting your config
 
@@ -194,7 +266,7 @@ rsync -a --delete --exclude='*.d.ts' ~/code/project-presets/mods/project-presets
 
 Only errors are logged by default. Debug logging is **off** unless you turn it on.
 
-**Esc closes the whole popup instead of going back.** Herdr closes a popup on Esc itself and never passes the key to the mod, so the picker can't use it to go back. Use **alt+b** (**⌘⌥B** on a Mac, since herdr uses ⌘B itself) to go back one screen (from the editor, Worktrees, Import / export…), or click Back / Cancel. Esc still closes the picker.
+**Esc closes the whole popup instead of going back.** Herdr closes a popup on Esc itself and never passes the key to the mod, so the picker can't use it to go back. Use **alt+b** (**⌘⌥B** on a Mac, since herdr uses ⌘B itself) to go back one screen (from the editor, Worktrees, Import / export…), or click Back / Cancel. Esc still closes the picker, and so does the × beside the key hints at the top right of every screen.
 
 **The shortcut does nothing right after launching herdr-app with no space open.** The window has no pane to hold the keyboard yet, so herdr doesn't see the key. Click once in the window (the "No space open." area), then press the shortcut; once you've had a space open it keeps working. This is herdr-app, not the mod: the shortcut is handled by herdr before the mod runs. Running `herdr-app do mod.open '{"name":"project-presets"}'` from a terminal is another way to open the picker.
 
@@ -224,8 +296,8 @@ To start a fresh log before reproducing, empty it with `: > ~/.config/herdr-app/
 
 ## Development
 
-`node --test test/` runs the tests (helpers, git, config, log and the picker's view, against real temporary git repos and stand-ins for `herdr` and gpui; how things look still needs a check by eye); `herdr-app check mods/project-presets` checks the mod. The `.d.ts` files in the mod folder are copied from `~/.config/herdr-app/` and not committed.
+`node --test test/` runs the tests (helpers, git, config, log and the picker's view, folder scanning and repo preset files, against real temporary git repos and stand-ins for `herdr` and gpui; how things look still needs a check by eye); `herdr-app check mods/project-presets` checks the mod. The `.d.ts` files in the mod folder are copied from `~/.config/herdr-app/` and not committed.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute.
 
-Setup commands and extra tabs run shell commands from your config, so read a shared config before using it.
+Setup commands and extra tabs run shell commands from your config, so read a shared config before using it. A repo's `.herdr/project-presets.json` is never used until you have seen what it sets and said to use it.

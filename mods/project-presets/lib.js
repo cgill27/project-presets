@@ -220,20 +220,21 @@ export function ago(ts, now = Date.now()) {
   return `${Math.floor(d / 30)} months ago`;
 }
 
-/** The list as shown: section headers (Open now, Pinned, Everything else, Template) and the rows between them, each row
+/** The list as shown: section headers (Open now, Pinned, Everything else, Found in your folders, Template) and the rows between them, each row
  *  keeping its index into `rows`. No headers while searching (the order is then by match) or when only one
  *  section has anything in it. */
 export function listItems(rows, searching) {
   if (searching) return rows.map((r, index) => ({ row: r, index }));
-  const buckets = { open: [], pinned: [], other: [], template: [] };
+  const buckets = { open: [], pinned: [], other: [], found: [], template: [] };
   rows.forEach((r, index) => {
     const item = { row: r, index };
     if (r.p.template) buckets.template.push(item);
     else if (r.space) buckets.open.push(item);
     else if (r.p.pinned) buckets.pinned.push(item);
+    else if (r.p.discovered) buckets.found.push(item);
     else buckets.other.push(item);
   });
-  const parts = [["Open now", buckets.open], ["Pinned", buckets.pinned], ["Everything else", buckets.other], ["Template", buckets.template]].filter(([, items]) => items.length);
+  const parts = [["Open now", buckets.open], ["Pinned", buckets.pinned], ["Everything else", buckets.other], ["Found in your folders", buckets.found], ["Template", buckets.template]].filter(([, items]) => items.length);
   if (parts.length < 2) return rows.map((r, index) => ({ row: r, index }));
   return parts.flatMap(([title, items]) => [{ header: title }, ...items]);
 }
@@ -461,4 +462,158 @@ export function withLauncherBlocks(tree) {
   if (wrap(copy, "status", "row", "status", 96, "status-row")) added.push("status");
   if (wrap(copy, "tabs", "row", "tabs", 36, "tabs-row")) added.push("tabs");
   return { tree: copy, added };
+}
+
+// ---- repo preset files ---------------------------------------------------------------------------
+// A repository can carry its own settings in .herdr/project-presets.json, so everyone who clones it opens it the same
+// way: { name?, group?, worktree?: {…}, git?: {…}, startup?: {…}, layouts?: [...] }, the same keys a project has in the
+// data file (no folder and no pin: those are each person's own). Its commands run on the machine of whoever opens the
+// project, so the picker shows the file and asks before it uses one (see presetSummary and the trust file in config.js).
+
+export const PRESET_FILE = ".herdr/project-presets.json";
+
+const PRESET_SHAPE = {
+  worktree: { mode: ["ask", "always", "never"], branchTemplate: "text", root: "text", spaceName: "text", repoSpace: "flag" },
+  git: { fetch: "flag", remote: "text", base: "text", fastForward: "flag" },
+  startup: { agent: "text", args: "text", prompt: "text", promptMode: ["arg", "send"], setup: "list", tabs: "list", layout: "text" },
+};
+
+/** Reads a repo preset file: { name?, group?, worktree, git, startup, layouts }, holding only the settings the file sets.
+ *  Throws with the reason when it is not JSON or a setting has the wrong kind of value; unknown keys are ignored. */
+export function parseRepoPreset(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { throw new Error(`not valid JSON: ${e.message}`); }
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("it must be a JSON object");
+  const preset = { worktree: {}, git: {}, startup: {}, layouts: [] };
+  for (const key of ["name", "group"]) {
+    if (data[key] === undefined) continue;
+    if (typeof data[key] !== "string") throw new Error(`"${key}" must be text`);
+    if (data[key].trim()) preset[key] = data[key].trim();
+  }
+  for (const [section, keys] of Object.entries(PRESET_SHAPE)) {
+    const given = data[section];
+    if (given === undefined) continue;
+    if (!given || typeof given !== "object" || Array.isArray(given)) throw new Error(`"${section}" must be an object`);
+    for (const [key, kind] of Object.entries(keys)) {
+      const v = given[key];
+      if (v === undefined) continue;
+      const where = `"${section}.${key}"`;
+      if (Array.isArray(kind)) { if (!kind.includes(v)) throw new Error(`${where} must be one of ${kind.join(", ")}`); }
+      else if (kind === "text") { if (typeof v !== "string") throw new Error(`${where} must be text`); }
+      else if (kind === "flag") { if (typeof v !== "boolean") throw new Error(`${where} must be true or false`); }
+      else if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) throw new Error(`${where} must be a list of commands`);
+      preset[section][key] = kind === "list" ? v.map((x) => x.trim()).filter(Boolean) : v;
+    }
+  }
+  if (data.layouts !== undefined) {
+    if (!Array.isArray(data.layouts)) throw new Error('"layouts" must be a list');
+    for (const l of data.layouts) {
+      if (!l || typeof l.name !== "string" || !l.name.trim() || !Array.isArray(l.panes)) throw new Error('each layout needs a "name" and a "panes" list');
+      layoutPlan(l); // a layout that can't be built is refused here, not at launch
+    }
+    preset.layouts = data.layouts;
+  }
+  return preset;
+}
+
+/** `project` with the preset's settings on top: only what the file sets changes. */
+export function applyRepoPreset(project, preset) {
+  return normalize({
+    ...project,
+    ...(preset.name ? { name: preset.name } : {}),
+    ...(preset.group ? { group: preset.group } : {}),
+    worktree: { ...project.worktree, ...preset.worktree },
+    git: { ...project.git, ...preset.git },
+    startup: { ...project.startup, ...preset.startup },
+  });
+}
+
+const RUNS = new Set(["startup.agent", "startup.args", "startup.setup", "startup.tabs"]);
+
+/** What a preset file sets, for the screen that asks before using it: [{ label, value, runs }], one line per setting and
+ *  per command. `runs` marks what is executed on this machine (the agent command, setup commands, tabs, layout commands). */
+export function presetSummary(preset) {
+  const lines = [];
+  const show = (v) => (typeof v === "boolean" ? (v ? "yes" : "no") : String(v) === "" ? "(empty)" : String(v));
+  if (preset.name) lines.push({ label: "Name", value: preset.name, runs: false });
+  if (preset.group) lines.push({ label: "Group", value: preset.group, runs: false });
+  for (const [path, label] of TEMPLATE_SETTINGS) {
+    const v = valueAt(preset, path);
+    if (v === undefined) continue;
+    const runs = RUNS.has(path.join("."));
+    if (Array.isArray(v)) { for (const x of v) lines.push({ label, value: x, runs }); if (!v.length) lines.push({ label, value: "(none)", runs: false }); }
+    else lines.push({ label, value: show(v), runs: runs && v !== "" });
+  }
+  for (const l of preset.layouts) {
+    const panes = l.panes.map((pane, i) => {
+      const type = i === 0 ? "agent" : (pane.type ?? (pane.command ? "command" : "shell"));
+      return type === "command" ? `runs ${String(pane.command).trim()}` : type;
+    });
+    lines.push({ label: `Layout "${l.name}"`, value: panes.join(" · "), runs: l.panes.some((pane, i) => i > 0 && (pane.type ?? (pane.command ? "command" : "shell")) === "command") });
+  }
+  return lines;
+}
+
+/** The preset file for a project: the settings a team shares (agent, prompt, setup, tabs, layout, worktree mode and branch
+ *  name, git settings) and the layout it names when that is one of `userLayouts`. Left out as each person's own: the
+ *  folder, the pin, the worktree folder, the space name and whether the repo's space opens first. */
+export function repoPresetOf(project, userLayouts = []) {
+  const p = normalize(project);
+  const layout = (userLayouts ?? []).find((l) => l && l.name === p.startup.layout);
+  return {
+    name: p.name,
+    ...(p.group ? { group: p.group } : {}),
+    worktree: { mode: p.worktree.mode, branchTemplate: p.worktree.branchTemplate },
+    git: { fetch: p.git.fetch, remote: p.git.remote, base: p.git.base, fastForward: p.git.fastForward },
+    startup: { agent: p.startup.agent, args: p.startup.args, prompt: p.startup.prompt, promptMode: p.startup.promptMode, setup: p.startup.setup, tabs: p.startup.tabs, layout: p.startup.layout },
+    ...(layout ? { layouts: [layout] } : {}),
+  };
+}
+
+// ---- folder scanning -----------------------------------------------------------------------------
+
+export const SCAN_DEPTH = 3; // how many folders below a scan folder a checkout may sit
+export const SCAN_MAX = 400; // more checkouts than this are not listed
+
+/** The `scan` key of the data file, tidied: { folders, depth, hidden }. */
+export function normalizeScan(scan) {
+  const list = (v) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim().replace(/(.)\/+$/, "$1")))] : []);
+  const depth = Number.isInteger(scan?.depth) ? Math.min(6, Math.max(1, scan.depth)) : SCAN_DEPTH;
+  return { folders: list(scan?.folders), depth, hidden: list(scan?.hidden) };
+}
+
+/** The `find` that lists the .git folders under the current folder, NUL separated. Hidden folders and node_modules are
+ *  skipped; only a .git *folder* counts, so linked worktrees and submodules (whose .git is a file) are not listed. */
+export const scanCommand = (depth) => ["sh", ["-c", 'cd "$1" && find . -maxdepth "$2" \\( -name node_modules -o -name ".?*" ! -name .git \\) -prune -o -name .git -type d -prune -print0', "sh"], depth + 1];
+
+/** The checkouts in that find's output, as absolute folders under `root`. */
+export function parseScan(stdout, root) {
+  const base = String(root).replace(/\/+$/, "");
+  return String(stdout ?? "").split("\0").filter(Boolean).map((rel) => {
+    const inner = rel.replace(/^\.\//, "").replace(/\/?\.git$/, "");
+    return inner ? `${base}/${inner}` : base || "/";
+  });
+}
+
+/** Folders sorted, without duplicates and without any that sit inside another one (a checkout vendored in a checkout). */
+export function dropNested(folders) {
+  const kept = [];
+  for (const f of [...new Set(folders)].sort()) if (!kept.some((k) => f.startsWith(k.replace(/\/+$/, "") + "/"))) kept.push(f);
+  return kept;
+}
+
+/** A project for a checkout a scan found: the template's settings (or the blank ones), named after its folder. It is
+ *  not in the data file until the person saves it; `discovered` marks it. */
+export function discoveredProject(folder, template = null) {
+  const base = template ? startFromTemplate(template) : blankProject(folder);
+  return { ...base, name: basename(folder), path: folder, pinned: false, discovered: true };
+}
+
+/** A found project as the data file keeps it: without the marks the picker put on it. */
+export function savedProject(p) {
+  const copy = JSON.parse(JSON.stringify(p));
+  delete copy.discovered;
+  delete copy.preset;
+  delete copy.presetError;
+  return copy;
 }

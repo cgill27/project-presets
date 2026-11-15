@@ -1,7 +1,7 @@
 // Everything that touches git or starts a space. `log(msg)` reports progress to the picker.
-import { exec as rawExec, hc, run, focused, spaces, home } from "herdr";
+import { exec as rawExec, hc, run, focused, spaces, home, writeTextFile } from "herdr";
 import { log } from "./log.js";
-import { splitArgs, slug, branchName, expandHome, expand, basename, dateStamp, timeStamp, parseWorktrees, layoutPlan, inFolder } from "./lib.js";
+import { splitArgs, slug, branchName, expandHome, expand, basename, dateStamp, timeStamp, parseWorktrees, layoutPlan, inFolder, scanCommand, parseScan } from "./lib.js";
 
 /** exec, logged in debug mode: command, folder, exit code and the first line of stderr. */
 async function exec(command, args = [], options = {}) {
@@ -374,4 +374,41 @@ export async function removeWorktree(project, wt) {
   if (r.code !== 0) throw new Error(`${wt.branch ?? wt.path}: ${out({ stdout: r.stderr }).split("\n")[0]}`);
   if (wt.branch && wt.merged) await git(folder, ["branch", "-d", wt.branch]);
   if (wt.space) run("space.close", { id: wt.space.id });
+}
+
+/** The git checkouts under `root`, at most `depth` folders down. Throws when the folder can't be read. */
+export async function scanFolder(root, depth) {
+  const [command, args, maxDepth] = scanCommand(depth);
+  const r = await exec(command, [...args, root, String(maxDepth)], { timeout: 20000 });
+  // find exits non-zero over one unreadable subfolder and still lists the rest: only an empty answer is a failure.
+  if (r.code !== 0 && !r.stdout) throw new Error(r.stderr.split("\n")[0] || "couldn't read the folder");
+  return parseScan(r.stdout, root);
+}
+
+/** The branch new work starts from in a checkout nobody has configured: the remote's default branch, else main or
+ *  master when one exists, else the branch checked out now. null when git can't say. */
+export async function detectBase(folder, remote = "origin") {
+  try {
+    const head = await git(folder, ["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`]);
+    if (head.code === 0 && out(head).startsWith(`${remote}/`)) return out(head).slice(remote.length + 1);
+    for (const b of ["main", "master"]) {
+      for (const ref of [`refs/remotes/${remote}/${b}`, `refs/heads/${b}`]) if ((await git(folder, ["rev-parse", "--verify", "--quiet", ref])).code === 0) return b;
+    }
+    const current = await git(folder, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    if (current.code === 0 && out(current)) return out(current);
+  } catch {}
+  return null;
+}
+
+/** Writes a file inside a repository, making its folder first. `expected` is the file as last read (null: new). */
+export async function writeRepoFile(path, text, expected) {
+  const dir = path.replace(/\/[^/]*$/, "");
+  const made = await exec("mkdir", ["-p", dir]);
+  if (made.code !== 0) throw new Error(made.stderr.split("\n")[0] || `couldn't create ${dir}`);
+  try { await writeTextFile(path, text, expected); } catch (e) {
+    // herdr may refuse to write outside its own folder: the shell can.
+    log("debug", `writeTextFile refused ${path}: ${e.message}`);
+    const r = await exec("sh", ["-c", 'printf %s "$2" > "$1"', "sh", path, text]);
+    if (r.code !== 0) throw new Error(r.stderr.split("\n")[0] || `couldn't write ${path}`);
+  }
 }
