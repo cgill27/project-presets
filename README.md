@@ -252,6 +252,15 @@ Then update with a pull. Herdr reloads a mod as soon as its files change, so the
 git -C ~/code/project-presets pull --ff-only
 ```
 
+A pull follows `main`, which has the newest changes. To stay on a release instead, check out its tag; the [releases page](https://github.com/cgill27/project-presets/releases) lists them with their notes:
+
+```sh
+git -C ~/code/project-presets fetch --tags
+git -C ~/code/project-presets checkout v1.1.0
+```
+
+To move to a later release, run the same two lines with its tag. To follow `main` again, run `git -C ~/code/project-presets checkout main` and then the pull above.
+
 **Installed by copying the folder.** Get the new version (a clone you have pulled, or the zip from the [latest release](https://github.com/cgill27/project-presets/releases/latest)) and replace the installed folder, keeping the `.d.ts` files herdr generates there:
 
 ```sh
