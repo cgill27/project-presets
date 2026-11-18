@@ -259,7 +259,7 @@ A pull follows `main`, which has the newest changes. To stay on a release instea
 
 ```sh
 git -C ~/code/project-presets fetch --tags
-git -C ~/code/project-presets checkout v1.1.0
+git -C ~/code/project-presets checkout v1.1.1
 ```
 
 To move to a later release, run the same two lines with its tag. To follow `main` again, run `git -C ~/code/project-presets checkout main` and then the pull above.
