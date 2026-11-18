@@ -67,7 +67,7 @@ The list is split into **Open now**, **Pinned** and **Everything else** (no head
 
 ### Pane layouts
 
-A project can open its space with more than the agent: a terminal below it, a file manager beside it, a log tail. Name a layout in the project's **Startup → Pane layout** field, or press **ctrl+alt+L** (**⌘⌥L** on macOS) in the list or the branch-name step to pick one for this launch: it steps through none (the agent alone) and then every layout. A selector under the projects shows them all with the one this launch will use lit, and it briefly turns bold with an accent ring after each change.
+A project can open its space with more than the agent: a terminal below it, a file manager beside it, a log tail. Click a layout's card under **Startup → Pane layout** in the project's editor (each card shows a small picture of its panes), or press **ctrl+alt+L** (**⌘⌥L** on macOS) in the list or the branch-name step to pick one for this launch: it steps through none (the agent alone) and then every layout. A selector under the projects shows them all with the one this launch will use lit, and it briefly turns bold with an accent ring after each change.
 
 Two layouts ship: `agent-terminal` (a shell below the agent) and `agent-side-terminal` (a shell to its right). Add your own, or replace one of those, with a `layouts` list in `~/.config/herdr-app/data/project-presets.json`, next to `projects`:
 
@@ -121,7 +121,10 @@ The last row of the list is a **Template**: a project with no folder and some st
 
 - **Make your defaults once.** Select the Template and press **alt+e** (**⌘E**), set the agent, layout, worktree and git settings you want your projects to share, and save. A saved template has no folder, so saving never asks for one.
 - **Change the Template later, and apply it to your projects.** When you save the Template after changing an agent, layout, worktree or git setting, and you have other projects, the editor asks: **Apply to all N projects**, **Only the template**, or **Keep editing**. Applying writes just the settings you changed (listed in the question), so each project keeps its own name, folder, group, pin and every other setting. Changing only the Template's name or group asks nothing.
-- **Make a project from it.** Select the Template and press **Enter** (or click Use template). The editor opens on a new project with the template's settings; give it a name and a folder (Browse…) and save. The Template stays for the next one. Once you have saved the template, **Add project** (**alt+n**) starts from its settings too.
+- **Make a project from it.** Select the Template and press **Enter** (or click Use template). The editor opens on a new project with the template's settings; give it a name and a folder (Browse…) and save. The Template stays for the next one. Once you have saved the template, **Add project** (**alt+n**) starts from its settings too. The save button there reads **Add project** and needs a folder. If you meant to change the Template itself, click **Save to template**: your changes are saved to the Template and no project is added.
+
+  ![New project from the template: Add project needs a folder, Save to template changes the template](docs/screenshots/28-new-from-template.png)
+
 - **Duplicate any project** with **alt+u** (**⌘U**) or the Duplicate button. The editor opens on a copy named `<name> copy` (then `copy 2`, …) with the same folder and settings, not pinned; change what differs and save. It is the quick way to open one repository with another agent, layout or worktree mode.
 ![Duplicating a project: the editor opens on a copy](docs/screenshots/20-duplicate.png)
 

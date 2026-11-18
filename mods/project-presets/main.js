@@ -54,7 +54,7 @@ const SECTION_FIELDS = {
   project: ["name", "path", "group"],
   worktree: ["branchTemplate", "root", "spaceName"],
   git: ["remote", "base"],
-  startup: ["agent", "args", "prompt", "layout", "setup", "tabs"],
+  startup: ["agent", "args", "prompt", "setup", "tabs"], // the layout is picked from cards, not typed
 };
 const MODES = ["ask", "always", "never"];
 const MODE_HELP = { ask: "ask for a branch name", always: "always a new worktree", never: "open the checkout" };
@@ -964,7 +964,12 @@ export default class ProjectPresets extends View {
       const d = this.collectDraft();
       if (!d.name) throw new Error("Give the project a name");
       if (!d.template) {
-        if (!d.path.trim()) throw new Error("Choose the project's folder: Browse… or type its path");
+        if (!d.path.trim()) {
+          if (this.section !== "project") this.showSection("project"); // where the Folder box is
+          throw new Error(this.editKind === "fromTemplate"
+            ? "This adds a new project, so it needs a folder: Browse… or type its path. To change the template itself, click Save to template."
+            : "Choose the project's folder: Browse… or type its path");
+        }
         await inspect(projectFolder(d));
       }
       let list = [...this.projects];
@@ -992,6 +997,22 @@ export default class ProjectPresets extends View {
       this.error = e.message;
     }
     cx.notify();
+  }
+
+  /** In "New project from the template": the person changed settings meaning to change the template, not to add a
+   *  project. Turns the editor into the template's own (its name, group and pin kept, no folder) and saves, which asks
+   *  about applying the changes to the existing projects as Edit on the template does. */
+  async saveToTemplate(cx) {
+    const template = this.projects.find((p) => p.template) ?? this.virtualTemplate ?? defaultTemplate();
+    const index = this.projects.indexOf(template);
+    const d = this.collectDraft();
+    this.fillEditor({ ...d, template: true, name: template.name, path: "", group: template.group, pinned: template.pinned });
+    this.index = index < 0 ? null : index;
+    this.editKind = "template";
+    this.draftBefore = JSON.parse(JSON.stringify(template));
+    this.draftLayouts = [];
+    this.error = null;
+    await this.save(cx);
   }
 
   async remove(cx) {
@@ -1411,6 +1432,26 @@ export default class ProjectPresets extends View {
     return box;
   }
 
+  /** The editor's layout choice: a card per layout with a picture of its panes, like the one in the detail card. The
+   *  choice is kept in the layout field's input state, so saving, the repo preset and the template read it as before. */
+  layoutCards(t, cx) {
+    const state = this.fields.find(([k]) => k === "layout")[1];
+    const current = state.value().trim();
+    const choices = [{ name: "", label: "Agent only", panes: [{ type: "agent" }] }, ...this.layouts];
+    for (const l of this.draftLayouts ?? []) if (!choices.some((c) => c.name === l.name)) choices.push({ ...l, note: "from the repo's file" });
+    // A name nothing defines (typed in the data file, or its layout was deleted): shown, so the choice is never changed silently.
+    if (!choices.some((c) => c.name === current)) choices.push({ name: current, label: current, panes: [{ type: "agent" }], note: "not found", bad: true });
+    return h_flex().gap(8).items_start().flex_wrap().children(choices.map((c, i) => {
+      const on = c.name === current;
+      return v_flex().id(`pp-edit-lay-${i}`).gap(4).p(6).rounded(9).border_1().cursor_pointer()
+        .border_color(on ? t.solid : t.input).bg(on ? t.selected : t.background)
+        .on_click(this.guard("editor layout click", () => { state.set_value(c.name); this.draft.startup.layout = c.name; cx.notify(); }))
+        .child(this.layoutThumb(t, c, on))
+        .child(div().text_size(z(10.5)).max_w(z(72)).text_color(on ? t.foreground : t.dim).when(on, (el) => el.font_semibold()).child(c.label ?? c.name))
+        .when(Boolean(c.note), (el) => el.child(div().text_size(z(9.5)).text_color(c.bad ? t.blocked : t.dim).child(c.note)));
+    }));
+  }
+
   /** Worktrees, Edit and Delete for the highlighted project: in the detail card, or under the list without it. */
   actionButtons(t, cx) {
     return h_flex().gap(8).items_center().flex_wrap()
@@ -1724,12 +1765,13 @@ export default class ProjectPresets extends View {
           .child(chip("pp-agent-shell", "Shell", "", this.shellIcon(t, 14), false))
           .children(this.agents.map((a, i) => chip(`pp-agent-${i}`, a.name, a.run.join(" "), this.programIcon(t, a, 14), a.installed === false))),
         field("agent"),
+        label("Pane layout", `what opens beside the agent; ${LAYOUT_HINT()} picks another at launch`),
+        this.layoutCards(t, cx),
         field("args"),
         field("prompt"),
         h_flex().pt(8).gap(8).items_center()
           .child(this.button(t, "pp-pmode", `Prompt: ${d.startup.promptMode === "send" ? "typed after start" : "command-line argument"}`, false, () => { d.startup.promptMode = d.startup.promptMode === "send" ? "arg" : "send"; cx.notify(); }))
           .child(div().text_size(z(11.5)).text_color(t.dim).child(d.startup.promptMode === "send" ? "for agents that reject a prompt argument" : "claude and most agents")),
-        field("layout"),
         field("setup"),
         field("tabs"),
       ],
@@ -1747,6 +1789,7 @@ export default class ProjectPresets extends View {
         .when(!d.template, (el) => el.child(this.button(t, "pp-write-preset", this.presetConfirm ? "Click again to replace the repo's file" : "Write repo preset", false, () => this.writePreset(cx))))
         .child(div().flex_1())
         .child(this.button(t, "pp-cancel", "Cancel", false, () => { this.mode = "list"; this.error = null; this.search.focus(); cx.notify(); }))
-        .child(this.button(t, "pp-save", "Save", true, () => this.save(cx))));
+        .when(this.editKind === "fromTemplate", (el) => el.child(this.button(t, "pp-save-template", "Save to template", false, () => this.saveToTemplate(cx))))
+        .child(this.button(t, "pp-save", this.editKind === "fromTemplate" ? "Add project" : "Save", true, () => this.save(cx))));
   }
 }

@@ -470,3 +470,30 @@ test("every screen has an × beside the key hints that closes the picker; a laun
   await click(v, cx, "pp-close");
   assert.equal(state.closed, 1);
 });
+
+test("the editor picks the pane layout from cards: a click sets it, Save keeps it, and an unknown name is shown rather than dropped", async () => {
+  const root = codeFolder("api");
+  const repo = join(root, "api");
+  const layouts = [{ name: "dev", panes: [{ type: "agent" }, { type: "shell", direction: "right" }] }];
+  const { v, cx } = await open({ layouts, projects: [normalize({ name: "API", path: repo, startup: { agent: "claude", layout: "gone" } })] });
+  press(v, cx, "e", { alt: true });
+  v.showSection("startup");
+  const cards = () => findAll(rendered(v), (e) => String(e.op?.("id")?.[0] ?? "").startsWith("pp-edit-lay-"));
+  const labels = cards().map((c) => textOf(c));
+  assert.match(labels[0], /Agent only/);
+  assert.ok(labels.some((l) => /dev/.test(l)), "the person's own layout has a card");
+  assert.match(labels.at(-1), /gone.*not found/, "a name no layout has is still shown");
+  assert.equal(/a layout name/.test(texts(v)), false, "no text box for the name any more");
+
+  const dev = labels.findIndex((l) => /dev/.test(l));
+  await click(v, cx, `pp-edit-lay-${dev}`);
+  assert.equal(cards().length, labels.length - 1, "the missing name's card goes once another is picked");
+  await click(v, cx, "pp-save");
+  assert.equal(v.projects.find((p) => p.name === "API").startup.layout, "dev");
+
+  press(v, cx, "e", { alt: true });
+  v.showSection("startup");
+  await click(v, cx, "pp-edit-lay-0");
+  await click(v, cx, "pp-save");
+  assert.equal(v.projects.find((p) => p.name === "API").startup.layout || "", "");
+});

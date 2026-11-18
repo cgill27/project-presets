@@ -1085,7 +1085,7 @@ test("saving a project made from the template needs a folder, and keeps the temp
   const { v, cx } = await open([], undefined, T);
   enter(v);
   await v.save(cx);
-  assert.match(v.error, /Choose the project's folder/);
+  assert.match(v.error, /needs a folder/);
   assert.equal(v.mode, "edit");
   fieldOf(v, "path").set_value(dir);
   fieldOf(v, "name").set_value("api");
@@ -1573,4 +1573,22 @@ test("an answer for text typed before the latest keystroke is dropped even while
   v.nameInput.set_value("older-still-typing"); // fires change -> previewSoon, which drops the request out there
   await held[0](cx);
   assert.notEqual(v.preview, "ada/old", "the in-flight answer for old text is not shown");
+});
+
+test("in New project from the template, Save without a folder explains itself and Save to template changes the template instead", async () => {
+  const { v, cx } = await open([], undefined, T);
+  enter(v);
+  v.showSection("startup");
+  fieldOf(v, "args").set_value("--fast");
+  await v.save(cx);
+  assert.match(v.error, /needs a folder.*Save to template/);
+  assert.equal(v.section, "project", "it shows the section with the Folder box");
+  assert.equal(v.mode, "edit");
+  assert.ok(hasId(v, "pp-save-template"));
+  await v.saveToTemplate(cx);
+  assert.equal(v.error, null);
+  assert.equal(v.mode, "list");
+  assert.equal(v.projects.length, 1, "no project was added");
+  const t = v.projects[0];
+  assert.deepEqual([t.template, t.name, t.path, t.startup.args, t.startup.agent], [true, "Template", "", "--fast", "claude"]);
 });
