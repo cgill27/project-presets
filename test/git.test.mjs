@@ -245,15 +245,27 @@ test("worktreeSpaceName uses the template and falls back to '<name> · <branch>'
 
 const spaceNews = () => state.runs.filter((r) => r.command === "space.new");
 
+test("launch reports a space Herdr didn't open, and names the worktree left behind", async () => {
+  state.spaceFails = true;
+  await assert.rejects(G.launch(project("/r/api"), "/r/api", "Demo"), /couldn't open the space: see its error popup for the reason\.$/);
+  await assert.rejects(G.launch(project("/r/api"), "/wt/api", "Demo · x"), /still there: \/wt\/api$/);
+});
+
+test("launch doesn't call a space missing when the window can't be listed", async () => {
+  state.lsFails = true;
+  await G.launch(project("/r/api"), "/r/api", "Demo");
+  assert.equal(spaceNews().length, 1);
+});
+
 test("launch without an agent opens a bare space", async () => {
   await G.launch(project("/r/api"), "/r/api", "Demo");
-  assert.deepEqual(spaceNews().map((r) => r.args), [{ name: "Demo", folder: "/r/api" }]);
+  assert.deepEqual(spaceNews().map((r) => r.args), [{ name: "Demo", folder: "/r/api", machine: "" }]);
 });
 
 test("launch in 'arg' mode hands the prompt to herdr as the task", async () => {
   const p = project("/r/api", { startup: { agent: "claude", args: "--model opus", prompt: "fix it" } });
   await G.launch(p, "/r/api", "Demo");
-  assert.deepEqual(spaceNews()[0].args, { name: "Demo", folder: "/r/api", argv: ["claude", "--model", "opus"], task: "fix it" });
+  assert.deepEqual(spaceNews()[0].args, { name: "Demo", folder: "/r/api", machine: "", argv: ["claude", "--model", "opus"], task: "fix it" });
   assert.deepEqual(state.sent, []);
 });
 
@@ -268,7 +280,7 @@ test("launch opens one tab per extra command", async () => {
 test("launch in 'send' mode starts the agent bare and types the prompt once it is idle", async () => {
   const p = project("/r/api", { startup: { agent: "hermes", prompt: "review x", promptMode: "send" } });
   await G.launch(p, "/r/api", "Demo");
-  assert.deepEqual(spaceNews()[0].args, { name: "Demo", folder: "/r/api", argv: ["hermes"] });
+  assert.deepEqual(spaceNews()[0].args, { name: "Demo", folder: "/r/api", machine: "", argv: ["hermes"] });
   assert.deepEqual(state.sent, [{ terminal: "t2", text: "review x" }]);
 });
 
@@ -360,6 +372,8 @@ test("a worktree launch opens the repo's space first when asked and it is not op
   const p = project("/r/api", { worktree: { repoSpace: true } });
   await G.launch(p, "/wt/api", "Demo · x");
   assert.deepEqual(spaceNews().map((r) => r.args.folder), ["/r/api", "/wt/api"]);
+  // Both on this computer, whichever machine the focused space is on.
+  assert.deepEqual(spaceNews().map((r) => r.args.machine), ["", ""]);
 });
 
 test("the repo's space is not reopened when it is already open, off, or the folder itself", async () => {

@@ -31,7 +31,7 @@ export const state = {
 };
 
 export function reset() {
-  Object.assign(state, { spaces: [], focused: null, terminals: [], foreground: "claude", runs: [], sent: [], agentStatus: "idle", nextId: 1, sendFails: false, hangNextLs: false, splits: [], splitFails: false, closed: 0, platform: "linux", picked: null });
+  Object.assign(state, { spaces: [], focused: null, terminals: [], foreground: "claude", runs: [], sent: [], agentStatus: "idle", nextId: 1, sendFails: false, hangNextLs: false, splits: [], splitFails: false, spaceFails: false, lsFails: false, closed: 0, platform: "linux", picked: null });
   for (const k of Object.keys(store)) delete store[k];
 }
 
@@ -46,6 +46,7 @@ export function exec(command, args = [], options = {}) {
   // The real herdr-app would split the person's window: answer like it, and record the request.
   if (command === "herdr-app") {
     if (args[0] === "ls") {
+      if (state.lsFails) return Promise.resolve({ code: 127, stdout: "", stderr: "herdr-app: not found" });
       const spaces = state.spaces.map((s) => ({ ...s, tabs: [{ id: `tb-${s.id}`, terminals: [{ terminal: `t-${s.id}`, pane: `pane-of-${s.id}` }] }] }));
       return Promise.resolve({ code: 0, stdout: JSON.stringify({ spaces }), stderr: "" });
     }
@@ -68,7 +69,7 @@ export function exec(command, args = [], options = {}) {
 // space.new makes a space and a live terminal in the folder, as herdr does; the rest is only recorded.
 export function run(command, args = {}) {
   state.runs.push({ command, args });
-  if (command === "space.new") {
+  if (command === "space.new" && !state.spaceFails) {
     const id = `sp${state.nextId++}`;
     state.spaces.push({ id, name: args.name, folder: args.folder, machine: null });
     // herdr moves focus to the new space only later: right after space.new focused() is still the old window

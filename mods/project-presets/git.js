@@ -182,11 +182,15 @@ const exclusive = (fn) => {
   return result;
 };
 
-/** The space space.new just made: not in `before`, with this name (and folder, when several), and its first pane. */
+/** The space space.new just made: not in `before`, with this name (and folder, when several), and its first pane.
+ *  null: the window was listed and the space never showed up (space.new failed; `run` doesn't say so itself).
+ *  undefined: the window couldn't be listed at all, so nothing is known. */
 async function findNewSpace(before, name, folder) {
+  let listed = false;
   for (let i = 0; i < 20; i++) {
     try {
       const r = await exec("herdr-app", ["ls"]);
+      if (r.code === 0) listed = true;
       const fresh = (JSON.parse(r.stdout || "{}").spaces ?? []).filter((s) => !before.has(s.id) && s.name === name);
       const found = fresh.filter((s) => s.folder === folder).pop() ?? fresh.pop();
       const pane = found?.tabs?.[0]?.terminals?.[0]?.pane;
@@ -194,7 +198,7 @@ async function findNewSpace(before, name, folder) {
     } catch {}
     await sleep(0.25);
   }
-  return null;
+  return listed ? null : undefined;
 }
 
 /** Splits the new space's first pane into the layout's panes. A failed split is logged and ends the layout;
@@ -216,6 +220,11 @@ async function buildLayout(layout, folder, root) {
   run("pane.focus", { pane: root });
 }
 
+// A project's folder is on this computer (git ran in it here), so its spaces are made here. Without `machine`,
+// space.new follows the focused space: launched from a space on another machine, it would look for the folder there
+// and fail with `cannot start "sh": No such file or directory`.
+const HERE = "";
+
 export async function launch(project, folder, name, layout = null) {
   const { agent, args, prompt, promptMode, tabs } = project.startup;
   const argv = agent.trim() ? [...splitArgs(agent), ...splitArgs(args)] : [];
@@ -230,13 +239,19 @@ export async function launch(project, folder, name, layout = null) {
     const main = projectFolder(project);
     if (project.worktree.repoSpace && folder !== main && !findSpace(project)) {
       log("debug", "opening the repo's space first", { main });
-      run("space.new", { name: project.name, folder: main });
+      run("space.new", { name: project.name, folder: main, machine: HERE });
     }
     log("debug", "launch", { folder, name, argv, promptMode, tabs });
-    run("space.new", { name, folder, ...(argv.length ? { argv, ...(prompt && !send ? { task: prompt } : {}) } : {}) });
+    run("space.new", { name, folder, machine: HERE, ...(argv.length ? { argv, ...(prompt && !send ? { task: prompt } : {}) } : {}) });
     // focused() can still be the window the picker was opened from just after space.new, so the new
     // space and its first pane come from `herdr-app ls`: the space that wasn't there before.
-    const here = layout || tabs.length ? await findNewSpace(spacesBefore, name, folder) : null;
+    const here = await findNewSpace(spacesBefore, name, folder);
+    // Herdr shows its own popup with the reason; say here what that leaves behind, and keep the picker open.
+    if (here === null) {
+      throw new Error(folder === main
+        ? "Herdr couldn't open the space: see its error popup for the reason."
+        : `Herdr couldn't open the space: see its error popup for the reason. The worktree was already created and is still there: ${folder}`);
+    }
     const space = here?.space ?? focused()?.space;
     // Found before the layout's split panes exist, which also start in this folder.
     const terminal = send ? await findNewTerminal(known, folder) : null;
